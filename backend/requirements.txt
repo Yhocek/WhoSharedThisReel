@@ -1,0 +1,27 @@
+# ============================================================
+# WhoSharedThisReel — Backend Dependencies
+# ============================================================
+# Core
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+pydantic[email]==2.11.3
+pydantic-settings==2.9.1
+
+# Supabase
+supabase==2.15.2
+
+# Auth / JWT
+python-jose[cryptography]==3.4.0
+
+# HTTP client (for OG metadata fetching)
+httpx==0.28.1
+
+# HTML parsing (for OG meta tag extraction)
+beautifulsoup4==4.13.4
+lxml==5.4.0
+
+# Rate limiting
+slowapi==0.1.9
+
+# Environment
+python-dotenv==1.1.0
