@@ -1,7 +1,7 @@
 """
 WhoSharedThisReel — Core Game Engine Algorithms
 
-Pure functional logic for equal-share round assignment,
+Pure functional logic for pool-constrained round assignment,
 scoring coefficients, and end-of-match analytical aggregations.
 """
 
@@ -21,41 +21,107 @@ def min_reels_per_player(round_count: int) -> int:
     return math.ceil(round_count / 2)
 
 
-def assign_rounds_to_players(round_count: int, player_ids: List[str]) -> List[str]:
+def assign_rounds_to_players(
+    round_count: int,
+    player_ids: List[str],
+    pool_sizes: Dict[str, int],
+) -> List[str]:
     """
-    Equal-share randomization.
-    Every player gets an equal number of rounds.
-    Remaining rounds are randomly distributed without duplicating owners.
+    Pool-constrained equal-share randomization.
+
+    Every player gets a base number of rounds (round_count // n).
+    Remaining rounds are distributed only to players whose pool can
+    absorb the extra assignment. Raises ValueError if the total pool
+    cannot cover round_count or any individual player would exceed
+    their available Reel count.
+
+    Args:
+        round_count: Total rounds to assign.
+        player_ids: List of player ID strings.
+        pool_sizes: Mapping of player_id -> number of Reels they contributed.
+
+    Returns:
+        List of owner IDs, one per round, in shuffled order.
+
+    Raises:
+        ValueError: If pool cannot satisfy the assignment.
     """
     n = len(player_ids)
     if n == 0:
         return []
-        
+
+    # Check total pool can cover round_count
+    total_reels = sum(pool_sizes.get(pid, 0) for pid in player_ids)
+    if total_reels < round_count:
+        raise ValueError(
+            f"Not enough Reels in the pool. Need {round_count} but only "
+            f"{total_reels} available across all players."
+        )
+
     base = round_count // n
     remainder = round_count % n
 
-    owners: List[str] = []
+    # Verify every player can handle at least the base allocation
     for pid in player_ids:
-        owners += [pid] * base
+        available = pool_sizes.get(pid, 0)
+        if available < base:
+            raise ValueError(
+                f"Player {pid} has {available} Reels but needs at least "
+                f"{base} for {round_count} rounds with {n} players."
+            )
 
+    # Build base assignments
+    assignment_counts: Dict[str, int] = {pid: base for pid in player_ids}
+
+    # Distribute remainder only to players who have capacity
     if remainder:
-        owners += random.sample(player_ids, remainder)
+        eligible = [
+            pid for pid in player_ids
+            if pool_sizes.get(pid, 0) > assignment_counts[pid]
+        ]
+        if len(eligible) < remainder:
+            raise ValueError(
+                f"Cannot distribute {remainder} remainder rounds — only "
+                f"{len(eligible)} players have capacity for extra rounds."
+            )
+        extras = random.sample(eligible, remainder)
+        for pid in extras:
+            assignment_counts[pid] += 1
+
+    # Final safety check: no player exceeds their pool
+    for pid, count in assignment_counts.items():
+        available = pool_sizes.get(pid, 0)
+        if count > available:
+            raise ValueError(
+                f"Assignment failed: player {pid} assigned {count} rounds "
+                f"but only has {available} Reels."
+            )
+
+    # Flatten to ordered list and shuffle
+    owners: List[str] = []
+    for pid, count in assignment_counts.items():
+        owners += [pid] * count
 
     random.shuffle(owners)
     return owners
 
 
-def calculate_score(reaction_ms: int, round_duration_ms: int = 15000, max_score: int = 1000) -> int:
+def calculate_score(
+    reaction_ms: int,
+    round_duration_ms: int = 10000,
+    max_score: int = 1000,
+) -> int:
     """
     Calculate score based on reaction time.
-    Faster == closer to MAX_SCORE. Max time (15000) == MAX_SCORE * 0.5.
+
+    Faster == closer to MAX_SCORE. Max time == MAX_SCORE * 0.5.
     Formula: score = round( (1 - (reaction_ms / round_duration_ms) * 0.5) * MAX_SCORE )
     """
     if reaction_ms < 0:
         reaction_ms = 0
     if reaction_ms > round_duration_ms:
         reaction_ms = round_duration_ms
-        
+
     coefficient = 1.0 - ((reaction_ms / round_duration_ms) * 0.5)
     return round(coefficient * max_score)
 
@@ -63,49 +129,50 @@ def calculate_score(reaction_ms: int, round_duration_ms: int = 15000, max_score:
 def generate_match_report(
     room_id: UUID,
     telemetry_records: List[Dict[str, Any]],
-    active_player_ids: List[str],
+    participant_player_ids: List[str],
     player_profiles: Dict[str, Dict[str, str]],
-    is_short_match: bool,
-    round_duration_ms: int = 15000
+    round_duration_ms: int = 10000,
 ) -> MatchReportResponse:
     """
     Generate End-of-Match analytics based on telemetry.
+
     telemetry_records must be sorted by round_no ascending.
-    Only players in active_player_ids are evaluated (disconnect orchestration).
+    participant_player_ids includes ALL players who participated
+    (including disconnected ones) — not just currently connected.
     """
-    active_set = set(active_player_ids)
-    
+    participant_set = set(participant_player_ids)
+
     # 1. Leaderboard & Averages
     player_scores = defaultdict(int)
     player_times = defaultdict(list)
-    
+
     # 2. Longest Streak
     current_streaks = defaultdict(int)
     max_streaks = defaultdict(int)
-    
+
     # 3. Most Accurate Matchup
     # map guesser_id -> owner_id -> [correct, total]
     matchups = defaultdict(lambda: defaultdict(lambda: [0, 0]))
 
     for record in telemetry_records:
         pid = str(record["player_id"])
-        if pid not in active_set:
+        if pid not in participant_set:
             continue
-            
+
         owner_id = str(record["reel_owner_id"])
         is_correct = record["is_correct"]
         score = record["score"]
         answered = record["answered"]
-        
+
         # Reaction time for averages (unanswered = max duration)
         reaction_ms = record.get("reaction_ms")
         if not answered or reaction_ms is None:
             reaction_ms = round_duration_ms
         player_times[pid].append(reaction_ms)
-        
+
         # Total score
         player_scores[pid] += score
-        
+
         # Streak tracking
         if is_correct:
             current_streaks[pid] += 1
@@ -113,7 +180,7 @@ def generate_match_report(
                 max_streaks[pid] = current_streaks[pid]
         else:
             current_streaks[pid] = 0
-            
+
         # Matchup tracking (only if they answered)
         if answered and record.get("chosen_player_id"):
             matchups[pid][owner_id][1] += 1  # total guesses against this owner
@@ -122,7 +189,7 @@ def generate_match_report(
 
     # Finalize Leaderboard
     leaderboard_entries = []
-    for pid in active_set:
+    for pid in participant_set:
         profile = player_profiles.get(pid, {})
         leaderboard_entries.append(LeaderboardEntry(
             rank=0,  # calculated below
@@ -131,10 +198,10 @@ def generate_match_report(
             total_score=player_scores[pid],
             avatar_url=profile.get("avatar_url")
         ))
-        
+
     # Sort leaderboard by score desc
     leaderboard_entries.sort(key=lambda x: x.total_score, reverse=True)
-    
+
     # Assign ranks with tie handling
     current_rank = 1
     for i, entry in enumerate(leaderboard_entries):
@@ -149,7 +216,7 @@ def generate_match_report(
     slowest_player = None
     fastest_avg = float('inf')
     slowest_avg = -1.0
-    
+
     for pid, times in player_times.items():
         if times:
             avg_time = sum(times) / len(times)
@@ -172,7 +239,7 @@ def generate_match_report(
     best_matchup_ratio = -1.0
     best_matchup_correct = -1
     best_matchup = None
-    
+
     for guesser_id, owners in matchups.items():
         for owner_id, stats in owners.items():
             correct, total = stats
@@ -186,7 +253,6 @@ def generate_match_report(
 
     return MatchReportResponse(
         room_id=room_id,
-        is_short_match=is_short_match,
         longest_streak_player_id=longest_streak_pid,
         longest_streak=longest_streak_val,
         fastest_player_id=fastest_player,

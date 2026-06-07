@@ -59,7 +59,7 @@ except Exception as e:
 
 # Test 4: URL normalizer
 print("\nTEST 4: URL normalization")
-from app.services.instagram_parser import validate_instagram_url
+from app.services.media_parser import validate_instagram_url
 test_cases = [
     "https://www.instagram.com/reel/ABC123/",
     "https://instagram.com/reels/DEF456?igsh=xyz",
@@ -74,7 +74,7 @@ for url in test_cases:
 print("\nTEST 5: Service imports")
 from app.services.reel_service import ingest_reel, refresh_reel_thumbnail, ensure_thumbnails_fresh
 from app.services.token_service import create_session_token, decode_session_token
-from app.services.instagram_parser import fetch_og_metadata, refresh_thumbnail
+from app.services.media_parser import fetch_og_metadata, refresh_thumbnail
 print("  OK: All services import cleanly")
 
 # Test 6: Token round-trip
@@ -98,22 +98,21 @@ print("  OK: Token round-trip verified")
 
 # Test 7: FastAPI app import
 print("\nTEST 7: FastAPI app import")
-try:
-    from app.main import app
-    routes = [r.path for r in app.routes if hasattr(r, "path")]
-    print(f"  OK: App created with {len(routes)} routes:")
-    for r in routes:
-        print(f"    {r}")
-except Exception as e:
-    print(f"  WARN: App import issue (expected without real Supabase): {e}")
+from app.main import app
+routes = [r.path for r in app.routes if hasattr(r, "path")]
+print(f"  OK: App created with {len(routes)} routes:")
+for r in routes:
+    print(f"    {r}")
 
 # Test 8: Config constants
 print("\nTEST 8: Game constants")
 from app.config import settings
-print(f"  MAX_SCORE_PER_ROUND:  {settings.max_score_per_round}")
-print(f"  ROUND_DURATION_MS:    {settings.round_duration_ms}")
-print(f"  SHORT_MATCH_THRESHOLD: {settings.short_match_threshold}")
-print(f"  THUMBNAIL_MAX_AGE:    {settings.thumbnail_max_age_seconds}s")
+print(f"  MAX_SCORE_PER_ROUND:   {settings.max_score_per_round}")
+print(f"  ROUND_DURATION_MS:     {settings.round_duration_ms}")
+print(f"  ALLOWED_ROUND_COUNTS:  {sorted(settings.ALLOWED_ROUND_COUNTS)}")
+print(f"  THUMBNAIL_MAX_AGE:     {settings.thumbnail_max_age_seconds}s")
+assert settings.round_duration_ms == 10000, f"Expected 10000, got {settings.round_duration_ms}"
+assert settings.ALLOWED_ROUND_COUNTS == {10, 20, 30, 50, 100}
 
 print("\n" + "=" * 60)
 if all_pass:

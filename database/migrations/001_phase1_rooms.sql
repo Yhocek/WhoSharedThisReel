@@ -17,6 +17,10 @@ CREATE TABLE public.profiles (
 
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
+-- RLS DECISION PENDING — These policies are provisional.
+-- SELECT USING (true) means world-readable; real authorization is enforced
+-- by session token validation in FastAPI routers. Owner must decide whether
+-- to tighten RLS or keep app-level auth as the sole gate.
 CREATE POLICY "profiles_select_all"
     ON public.profiles FOR SELECT USING (true);
 
@@ -34,7 +38,7 @@ CREATE TABLE public.rooms (
     host_id     UUID,
     status      room_status NOT NULL DEFAULT 'waiting',
     max_players SMALLINT NOT NULL DEFAULT 8 CHECK (max_players BETWEEN 2 AND 12),
-    round_count SMALLINT NOT NULL DEFAULT 10 CHECK (round_count BETWEEN 3 AND 30),
+    round_count SMALLINT NOT NULL DEFAULT 10 CHECK (round_count IN (10, 20, 30, 50, 100)),
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at  TIMESTAMPTZ NOT NULL DEFAULT (now() + INTERVAL '3 hours'),
 
@@ -46,6 +50,7 @@ CREATE INDEX idx_rooms_expires_at ON public.rooms(expires_at);
 
 ALTER TABLE public.rooms ENABLE ROW LEVEL SECURITY;
 
+-- RLS DECISION PENDING — see profiles comment above.
 CREATE POLICY "rooms_select_all"
     ON public.rooms FOR SELECT USING (true);
 
@@ -74,6 +79,7 @@ CREATE INDEX idx_room_players_room ON public.room_players(room_id);
 
 ALTER TABLE public.room_players ENABLE ROW LEVEL SECURITY;
 
+-- RLS DECISION PENDING — see profiles comment above.
 CREATE POLICY "room_players_select_all"
     ON public.room_players FOR SELECT USING (true);
 

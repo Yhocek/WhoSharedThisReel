@@ -77,12 +77,15 @@ CREATE INDEX idx_reels_stale_thumbnails
 
 ALTER TABLE public.reels ENABLE ROW LEVEL SECURITY;
 
--- Registered users can read their own reels
-CREATE POLICY "reels_select_own"
+-- RLS DECISION PENDING — These policies are provisional.
+-- SELECT USING (true) means world-readable; real authorization is enforced
+-- by session token validation in FastAPI routers. All backend writes go
+-- through the service_role client (bypasses RLS). Owner must decide whether
+-- to tighten RLS or keep app-level auth as the sole gate.
+CREATE POLICY "reels_select_all"
     ON public.reels FOR SELECT
-    USING (auth.uid() = ingested_by);
+    USING (true);
 
--- Service role has full access (backend operations)
 CREATE POLICY "reels_service_role"
     ON public.reels FOR ALL
     USING (auth.role() = 'service_role');
@@ -107,6 +110,7 @@ CREATE INDEX idx_vault_reels_player ON public.vault_reels(player_id);
 
 ALTER TABLE public.vault_reels ENABLE ROW LEVEL SECURITY;
 
+-- RLS DECISION PENDING — see reels comment above.
 CREATE POLICY "vault_reels_select_room_members"
     ON public.vault_reels FOR SELECT USING (true);
 
@@ -126,7 +130,7 @@ CREATE TABLE public.round_telemetry (
     reel_owner_id    UUID NOT NULL REFERENCES public.room_players(id) ON DELETE CASCADE,
     player_id        UUID NOT NULL REFERENCES public.room_players(id) ON DELETE CASCADE,
     chosen_player_id UUID REFERENCES public.room_players(id) ON DELETE SET NULL,
-    reaction_ms      INTEGER CHECK (reaction_ms IS NULL OR (reaction_ms >= 0 AND reaction_ms <= 15000)),
+    reaction_ms      INTEGER CHECK (reaction_ms IS NULL OR (reaction_ms >= 0 AND reaction_ms <= 10000)),
     is_correct       BOOLEAN NOT NULL DEFAULT false,
     answered         BOOLEAN NOT NULL DEFAULT false,
     score            INTEGER NOT NULL DEFAULT 0 CHECK (score >= 0 AND score <= 1000),
@@ -141,6 +145,7 @@ CREATE INDEX idx_telemetry_room_round ON public.round_telemetry(room_id, round_n
 
 ALTER TABLE public.round_telemetry ENABLE ROW LEVEL SECURITY;
 
+-- RLS DECISION PENDING — see reels comment above.
 CREATE POLICY "telemetry_select_room_members"
     ON public.round_telemetry FOR SELECT USING (true);
 

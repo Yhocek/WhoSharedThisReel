@@ -17,7 +17,7 @@ import logging
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Header
 from supabase import Client as SupabaseClient
 
 from app.dependencies import get_optional_user_id, get_supabase
@@ -34,6 +34,7 @@ from app.services.reel_service import (
     list_user_reels,
     refresh_reel_thumbnail,
 )
+from app.services.token_service import decode_session_token
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ router = APIRouter(prefix="/api/v1/reels", tags=["reels"])
 async def ingest_reel_endpoint(
     request: IngestReelRequest,
     user_id: Optional[str] = Depends(get_optional_user_id),
+    authorization: Optional[str] = Header(None),
     supabase: SupabaseClient = Depends(get_supabase),
 ) -> ReelIngestionResult:
     """
@@ -64,11 +66,19 @@ async def ingest_reel_endpoint(
     R2/R3 compliance: Guarantees creator attribution is persisted.
     R5 compliance: Records thumbnail_fetched_at for CDN freshness tracking.
     """
+    # Extract player_id from session token if present (for anonymous ownership)
+    player_id = None
+    if authorization and authorization.startswith("Bearer "):
+        payload = decode_session_token(authorization[7:])
+        if payload:
+            player_id = payload.get("sub")
+
     try:
         result = await ingest_reel(
             request=request,
             user_id=UUID(user_id) if user_id else None,
             supabase=supabase,
+            player_id=player_id,
         )
         return result
     except ValueError as e:

@@ -100,14 +100,12 @@ async def get_optional_user_id(
     authorization: Optional[str] = Header(None),
 ) -> Optional[str]:
     """
-    Attempt to extract a Supabase Auth user ID from the Authorization header.
+    Attempt to extract a user ID from the Authorization header.
 
-    This supports BOTH:
-      - Session tokens (our own JWTs) → extracts player_id
-      - Supabase JWTs → extracts the 'sub' claim (user UUID)
-
-    For Reel ingestion, registered users use their Supabase JWT.
-    Anonymous users don't send auth headers.
+    Strategy:
+      1. Try Supabase JWT validation (registered users via Supabase Auth).
+      2. Fall back to our session token's user_id claim.
+      3. Return None if no valid auth is present (anonymous users).
 
     Returns:
         User UUID string, or None if no valid auth is present.
@@ -117,16 +115,7 @@ async def get_optional_user_id(
 
     token = authorization[7:]
 
-    # Try our session token first
-    payload = decode_session_token(token)
-    if payload and payload.get("type") == "registered":
-        # This is a registered player's session token
-        # But for Vault operations we need the actual user_id
-        # The session token's 'sub' is the player_id, not user_id
-        # So we fall through to try Supabase JWT validation
-        pass
-
-    # Try Supabase JWT validation
+    # Try Supabase JWT validation first (registered users)
     try:
         supabase = get_supabase()
         user_response = supabase.auth.get_user(token)
@@ -135,7 +124,8 @@ async def get_optional_user_id(
     except Exception as e:
         logger.debug("Supabase JWT validation failed: %s", str(e))
 
-    # If session token had a user_id in a custom claim, use it
+    # Fall back to our session token
+    payload = decode_session_token(token)
     if payload:
         return payload.get("user_id")
 

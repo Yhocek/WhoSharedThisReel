@@ -9,12 +9,20 @@ from __future__ import annotations
 
 from typing import Optional, Dict, List
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class StartGameRequest(BaseModel):
     """Host starts the match, specifying total rounds."""
-    round_count: int = Field(..., ge=3, le=30, description="Total number of rounds")
+    round_count: int = Field(..., description="Total number of rounds (10, 20, 30, 50, or 100)")
+
+    @field_validator("round_count")
+    @classmethod
+    def validate_round_count(cls, v: int) -> int:
+        allowed = {10, 20, 30, 50, 100}
+        if v not in allowed:
+            raise ValueError(f"round_count must be one of {sorted(allowed)}")
+        return v
 
 
 class SubmitAnswerRequest(BaseModel):
@@ -41,18 +49,17 @@ class LeaderboardEntry(BaseModel):
 class MatchReportResponse(BaseModel):
     """End-of-Match analytics report."""
     room_id: UUID
-    is_short_match: bool
-    
+
     longest_streak_player_id: Optional[UUID]
     longest_streak: int
-    
+
     fastest_player_id: Optional[UUID]
     fastest_avg_ms: Optional[float]
-    
+
     slowest_player_id: Optional[UUID]
     slowest_avg_ms: Optional[float]
-    
+
     most_accurate_pair: Optional[Dict[str, str]]  # {"guesser_id": ..., "owner_id": ...}
     most_accurate_ratio: Optional[float]
-    
+
     leaderboard: List[LeaderboardEntry]

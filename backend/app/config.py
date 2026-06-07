@@ -8,7 +8,7 @@ No secrets are ever hardcoded. See .env.example for required vars.
 from __future__ import annotations
 
 import json
-from typing import List
+from typing import ClassVar, List, Set
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     meta_app_access_token: str = ""  # Optional: for oEmbed API
 
     # ── CORS ──────────────────────────────────────────────────
-    cors_origins: List[str] = ["http://localhost:8081"]
+    cors_origins: List[str] = ["http://localhost:8081", "http://localhost:19006"]
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -58,23 +58,25 @@ class Settings(BaseSettings):
     # ── Thumbnail Freshness (R5 compliance) ───────────────────
     thumbnail_max_age_seconds: int = 3600  # 1 hour default
 
+    # ── Heartbeat (Automatic Disconnect Detection) ────────────
+    heartbeat_timeout_seconds: int = 30
+    heartbeat_sweep_interval_seconds: int = 15
+
     # ── Server ────────────────────────────────────────────────
     host: str = "0.0.0.0"
     port: int = 8000
     debug: bool = False
 
     # ── Constants (non-configurable game rules) ───────────────
+    ALLOWED_ROUND_COUNTS: ClassVar[Set[int]] = {10, 20, 30, 50, 100}
+
     @property
     def max_score_per_round(self) -> int:
         return 1000
 
     @property
     def round_duration_ms(self) -> int:
-        return 15000
-
-    @property
-    def short_match_threshold(self) -> int:
-        return 5
+        return 10000
 
 
 # Singleton instance — import this everywhere

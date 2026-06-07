@@ -33,9 +33,9 @@ from app.schemas.reel import (
     ThumbnailRefreshResult,
     ReelListResponse,
 )
-from app.services.instagram_parser import (
-    validate_instagram_url,
-    fetch_og_metadata,
+from app.services.media_parser import (
+    validate_media_url,
+    fetch_media_metadata,
     fetch_oembed,
     refresh_thumbnail,
 )
@@ -73,6 +73,7 @@ async def ingest_reel(
     request: IngestReelRequest,
     user_id: Optional[UUID],
     supabase: SupabaseClient,
+    player_id: Optional[str] = None,
 ) -> ReelIngestionResult:
     """
     Full Reel ingestion pipeline.
@@ -89,6 +90,8 @@ async def ingest_reel(
         request: Validated IngestReelRequest from the router.
         user_id: UUID of the registered user, or None for anonymous.
         supabase: Supabase admin client (service_role).
+        player_id: room_players.id for anonymous players (enables
+                   ownership verification in add_reel_to_vault).
 
     Returns:
         ReelIngestionResult with the persisted Reel data.
@@ -97,26 +100,52 @@ async def ingest_reel(
         ValueError: If URL is invalid or Reel is inaccessible.
     """
     # ── Step 1: Validate URL ──────────────────────────────────
-    is_valid, normalized_url, shortcode = validate_instagram_url(request.source_url)
+    is_valid, normalized_url, shortcode, provider = validate_media_url(request.source_url)
     if not is_valid or shortcode is None:
         raise ValueError(
-            "Invalid Instagram Reel URL. Expected format: "
-            "https://www.instagram.com/reel/SHORTCODE/"
+            "Invalid video URL. Expected a public Instagram Reel or TikTok URL."
         )
 
-    # ── Step 2: Deduplication check ───────────────────────────
-    existing = (
+    # ── Step 2: Fetch metadata (moved up to resolve canonical URLs) ──
+    async with httpx.AsyncClient() as client:
+        metadata = await fetch_media_metadata(normalized_url, client)
+
+        # Log any non-fatal parse warnings
+        for error in metadata.errors:
+            logger.warning("Media parse warning for %s: %s", normalized_url, error)
+
+        # ── Step 3: Fetch oEmbed HTML (optional, Instagram only) ──
+        oembed_html = None
+        if provider == "Instagram" and settings.meta_app_access_token:
+            oembed_html = await fetch_oembed(
+                normalized_url, settings.meta_app_access_token, client
+            )
+            if oembed_html:
+                metadata.oembed_html = oembed_html
+
+    # Use resolved canonical source URL for deduplication and persistence
+    resolved_source_url = metadata.source_url or normalized_url
+
+    # ── Step 4: Deduplication check ───────────────────────────
+    # Registered users: dedup by (source_url, ingested_by)
+    # Anonymous users: dedup by (source_url, ingested_by_player_id)
+    query = (
         supabase.table("reels")
         .select("*")
-        .eq("source_url", normalized_url)
-        .eq("ingested_by", str(user_id) if user_id else "")
-        .maybe_single()
-        .execute()
+        .eq("source_url", resolved_source_url)
     )
+    if user_id:
+        query = query.eq("ingested_by", str(user_id))
+    elif player_id:
+        query = query.eq("ingested_by_player_id", player_id)
+    else:
+        query = query.is_("ingested_by", "null").is_("ingested_by_player_id", "null")
 
-    if existing.data:
+    existing = query.maybe_single().execute()
+
+    if existing and existing.data:
         logger.info(
-            "Duplicate Reel detected: %s for user %s", normalized_url, user_id
+            "Duplicate Reel detected: %s for user %s", resolved_source_url, user_id
         )
         return ReelIngestionResult(
             reel=_row_to_reel_response(existing.data),
@@ -124,38 +153,21 @@ async def ingest_reel(
             metadata_source="cached",
         )
 
-    # ── Step 3: Fetch OG metadata ─────────────────────────────
-    async with httpx.AsyncClient() as client:
-        metadata = await fetch_og_metadata(normalized_url, client)
-
-        # Log any non-fatal parse warnings
-        for error in metadata.errors:
-            logger.warning("OG parse warning for %s: %s", normalized_url, error)
-
-        # ── Step 4: Fetch oEmbed HTML (optional) ──────────────
-        oembed_html = None
-        if settings.meta_app_access_token:
-            oembed_html = await fetch_oembed(
-                normalized_url, settings.meta_app_access_token, client
-            )
-            if oembed_html:
-                metadata.oembed_html = oembed_html
-
     # ── Step 5: Enforce attribution compliance ────────────────
     # R2/R3: The CHECK constraint in Postgres will reject inserts
     # where BOTH creator_handle AND creator_url are NULL. The parser
     # already applies fallback logic, but we double-check here.
     if not metadata.has_valid_attribution:
         # Ultimate fallback: the source URL itself IS attribution
-        metadata.creator_url = normalized_url
+        metadata.creator_url = resolved_source_url
         logger.warning(
             "Attribution fallback triggered for %s — using source_url",
-            normalized_url,
+            resolved_source_url,
         )
 
     # ── Step 6: Persist to Supabase ───────────────────────────
     insert_payload = {
-        "source_url": normalized_url,
+        "source_url": resolved_source_url,
         "creator_handle": metadata.creator_handle,
         "creator_url": metadata.creator_url,
         "provider": metadata.provider,
@@ -169,6 +181,7 @@ async def ingest_reel(
         "caption": metadata.caption,
         "user_tags": request.user_tags,
         "ingested_by": str(user_id) if user_id else None,
+        "ingested_by_player_id": player_id if (not user_id and player_id) else None,
     }
 
     result = supabase.table("reels").insert(insert_payload).execute()
@@ -212,7 +225,7 @@ async def refresh_reel_thumbnail(
         .execute()
     )
 
-    if not reel_result.data:
+    if not reel_result or not reel_result.data:
         return ThumbnailRefreshResult(
             reel_id=reel_id,
             success=False,
