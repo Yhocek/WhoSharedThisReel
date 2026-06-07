@@ -16,6 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.whosharedthisvideo.app",
+      "buildNumber": "1.0.0",
       "infoPlist": {
         "LSApplicationQueriesSchemes": [
           "instagram",
@@ -26,6 +27,7 @@
     },
     "android": {
       "package": "com.whosharedthisvideo.app",
+      "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0A0A0F"
