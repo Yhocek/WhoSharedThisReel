@@ -8,6 +8,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Linking,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -147,6 +148,17 @@ export default function HomeScreen() {
               <Text style={styles.buttonTextCreate}>Create New Room</Text>
             </TouchableOpacity>
           </View>
+
+          {/* Legal / Policy Footer */}
+          <View style={styles.footerLinks}>
+            <TouchableOpacity onPress={() => Linking.openURL('https://whosharedthisvideo-api.onrender.com/privacy')}>
+              <Text style={styles.footerLinkText}>Privacy Policy</Text>
+            </TouchableOpacity>
+            <Text style={styles.footerLinkDivider}>•</Text>
+            <TouchableOpacity onPress={() => Linking.openURL('https://whosharedthisvideo-api.onrender.com/terms')}>
+              <Text style={styles.footerLinkText}>Terms of Service</Text>
+            </TouchableOpacity>
+          </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
     </View>
@@ -273,5 +285,22 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginHorizontal: 16,
     letterSpacing: 2,
+  },
+  footerLinks: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 24,
+  },
+  footerLinkText: {
+    color: '#666677',
+    fontSize: 12,
+    fontWeight: '500',
+    textDecorationLine: 'underline',
+  },
+  footerLinkDivider: {
+    color: '#444455',
+    marginHorizontal: 8,
+    fontSize: 12,
   },
 });
