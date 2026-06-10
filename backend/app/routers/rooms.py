@@ -567,6 +567,15 @@ async def websocket_endpoint(
 
     await manager.connect(websocket, room_id, player_id)
 
+    # Set player as connected in the DB on successful connection
+    try:
+        supabase.table("room_players").update({
+            "is_connected": True,
+            "last_heartbeat_at": datetime.now(timezone.utc).isoformat()
+        }).eq("room_id", room_id).eq("id", player_id).execute()
+    except Exception as db_err:
+        logger.error("Failed to update is_connected status on WebSocket connect: %s", db_err)
+
     try:
         while True:
             raw = await websocket.receive_text()

@@ -10,6 +10,7 @@ const state = {
   roomData: null,
   isHost: false,
   pollInterval: null,
+  heartbeatInterval: null,
   ws: null,
   wsConnected: false,
   selectedRounds: 20,
@@ -137,6 +138,10 @@ function clearSession() {
   if (state.pollInterval) {
     clearInterval(state.pollInterval);
     state.pollInterval = null;
+  }
+  if (state.heartbeatInterval) {
+    clearInterval(state.heartbeatInterval);
+    state.heartbeatInterval = null;
   }
   
   disconnectWebSocket();
@@ -290,18 +295,24 @@ function enterLobby() {
   fetchRoom();
   connectWebSocket();
   
-  // Set up polling interval (every 3 seconds)
+  // Set up polling interval (every 3 seconds) for room data updates
   if (state.pollInterval) clearInterval(state.pollInterval);
   state.pollInterval = setInterval(() => {
     fetchRoom();
-    
-    // Heartbeat ping
-    apiCall(`/rooms/${state.roomId}/heartbeat`, { method: 'POST' }).catch(() => {});
-    
-    // Auto-reconnect WebSocket if dropped
-    if (!state.wsConnected) {
-      console.log('[WS] Connection idle or disconnected, auto-reconnecting...');
-      connectWebSocket();
+  }, 3000);
+
+  // Set up heartbeat interval (every 3 seconds) that continues running during the match
+  if (state.heartbeatInterval) clearInterval(state.heartbeatInterval);
+  state.heartbeatInterval = setInterval(() => {
+    if (state.roomId && state.playerId) {
+      // Heartbeat ping
+      apiCall(`/rooms/${state.roomId}/heartbeat`, { method: 'POST' }).catch(() => {});
+      
+      // Auto-reconnect WebSocket if dropped
+      if (!state.wsConnected) {
+        console.log('[WS] Connection idle or disconnected, auto-reconnecting...');
+        connectWebSocket();
+      }
     }
   }, 3000);
 }
@@ -327,6 +338,17 @@ async function fetchRoom() {
       }
       showView('game-view');
       enterGame();
+      return;
+    }
+
+    // Redirect if room status is finished (to show leaderboard)
+    if (res.status === 'finished') {
+      if (state.pollInterval) {
+        clearInterval(state.pollInterval);
+        state.pollInterval = null;
+      }
+      showView('leaderboard-view');
+      fetchLeaderboardReport();
       return;
     }
     
@@ -746,9 +768,7 @@ function handleWsEvent(event, data) {
       break;
       
     case 'room_reset':
-      showView('lobby-view');
-      fetchRoom();
-      connectWebSocket();
+      enterLobby();
       break;
       
     case 'chat':
@@ -1081,9 +1101,7 @@ async function fetchLeaderboardReport() {
 async function handlePlayAgainFromLeaderboard() {
   try {
     await apiCall(`/rooms/${state.roomId}/play-again`, { method: 'POST' });
-    showView('lobby-view');
-    fetchRoom();
-    connectWebSocket();
+    enterLobby();
     showToast('Room reset for a new match!', 'success');
   } catch (err) {
     const detail = err.response?.data?.detail;
