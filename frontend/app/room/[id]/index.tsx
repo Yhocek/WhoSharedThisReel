@@ -367,7 +367,7 @@ export default function LobbyScreen() {
   }
 
   const connectedPlayers = room.players.filter((p) => p.is_connected);
-  const minRequired = Math.ceil(selectedRounds / 2);
+  const minRequired = Math.ceil((room?.round_count ?? selectedRounds) / 2);
   const canStartGame = connectedPlayers.every(
     (p) => (room.vault_counts?.[p.id] ?? 0) >= minRequired
   );

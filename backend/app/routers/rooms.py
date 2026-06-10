@@ -128,6 +128,7 @@ async def get_room_endpoint(
         return RoomResponse(
             **room_data,
             players=players_data,
+            vault_counts=details.get("vault_counts", {}),
         )
     except ValueError as e:
         raise HTTPException(
