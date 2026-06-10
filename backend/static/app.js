@@ -139,7 +139,8 @@ function showView(viewId) {
 // API Request Wrappers
 // -----------------------------------------------------------------------------
 async function apiCall(endpoint, options = {}) {
-  const url = endpoint.startsWith('/') ? endpoint : `/api/v1/${endpoint}`;
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint;
+  const url = cleanEndpoint.startsWith('api/v1') ? `/${cleanEndpoint}` : `/api/v1/${cleanEndpoint}`;
   
   const headers = {
     'Content-Type': 'application/json',
