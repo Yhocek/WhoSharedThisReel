@@ -425,7 +425,7 @@ export default function LobbyScreen() {
 
         {/* Pool Status Card */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Pool Status (Min {minRequired} reels/player)</Text>
+          <Text style={styles.sectionTitle}>Pool Status ({minRequired} reels per player)</Text>
           <View style={styles.poolCard}>
             <Text style={styles.poolTotalText}>
               Total Reels in Pool: <Text style={styles.poolTotalValue}>{Object.values(room.vault_counts || {}).reduce((a, b) => a + b, 0)}</Text>
@@ -648,7 +648,7 @@ export default function LobbyScreen() {
           <View style={styles.hostSettings}>
             <Text style={styles.sectionTitle}>Game Info</Text>
             <Text style={{ color: '#aaa', fontSize: 14, marginBottom: 8 }}>
-              Waiting for host to start the game. Selected rounds: {room.round_count} (needs {Math.ceil(room.round_count / 2)} reels/player).
+              Waiting for host to start the game. Selected rounds: {room.round_count} (needs {Math.ceil(room.round_count / 2)} reels per player).
             </Text>
           </View>
         )}

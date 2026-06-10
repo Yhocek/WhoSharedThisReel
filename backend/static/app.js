@@ -326,7 +326,7 @@ function renderLobbyPlayers(players, me) {
 
 function renderPoolStatus(players, vaultCounts) {
   const minRequired = Math.ceil(state.selectedRounds / 2);
-  document.getElementById('requirement-count').textContent = `Min ${minRequired} reels/player`;
+  document.getElementById('requirement-count').textContent = `${minRequired} reels per player`;
   
   const activePlayers = players.filter(p => p.is_connected);
   const totalReels = Object.values(vaultCounts).reduce((a, b) => a + b, 0);
@@ -374,7 +374,7 @@ function updateHostControls(me) {
     waitingCard.classList.remove('hidden');
     
     const rounds = state.roomData.round_count;
-    document.getElementById('waiting-game-info').textContent = `Waiting for host to start the game. Selected rounds: ${rounds} (requires ${Math.ceil(rounds / 2)} reels/player).`;
+    document.getElementById('waiting-game-info').textContent = `Waiting for host to start the game. Selected rounds: ${rounds} (requires ${Math.ceil(rounds / 2)} reels per player).`;
   }
 }
 
