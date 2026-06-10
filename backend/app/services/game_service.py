@@ -208,6 +208,15 @@ async def start_match(
     player_options = [{"id": p, "name": next((x["display_name"] for x in players if str(x["id"]) == p), "Unknown")} for p in player_ids]
     ends_at = (now + timedelta(milliseconds=settings.round_duration_ms)).isoformat()
     
+    # Update game_state with ends_at for the first round
+    try:
+        supabase.table("game_state").update({
+            "round_ends_at": ends_at,
+            "updated_at": now.isoformat()
+        }).eq("room_id", room_id).execute()
+    except Exception as db_err:
+        logger.error("Failed to update initial round_ends_at in game_state: %s", db_err)
+    
     task_manager.spawn(room_id, manager.broadcast_to_room(room_id, {
         "event": "round_start",
         "round_no": 1,
@@ -426,13 +435,6 @@ async def _resolve_round(room_id: str, round_no: int, supabase: SupabaseClient):
                 next_reel_urls = get_reel_source_urls([next_reel_id], supabase)
                 next_reel_url = next_reel_urls.get(next_reel_id, "")
                 
-                # Update game_state
-                supabase.table("game_state").update({
-                    "current_round": next_round,
-                    "current_reel_id": next_reel_id,
-                    "updated_at": datetime.now(timezone.utc).isoformat()
-                }).eq("room_id", room_id).execute()
-                
                 # 4-second delay to let clients show results
                 await asyncio.sleep(4)
                 
@@ -443,6 +445,17 @@ async def _resolve_round(room_id: str, round_no: int, supabase: SupabaseClient):
                 # Schedule next round
                 now = datetime.now(timezone.utc)
                 ends_at = (now + timedelta(milliseconds=settings.round_duration_ms)).isoformat()
+                
+                # Update game_state with the next round details and round_ends_at
+                try:
+                    supabase.table("game_state").update({
+                        "current_round": next_round,
+                        "current_reel_id": next_reel_id,
+                        "round_ends_at": ends_at,
+                        "updated_at": now.isoformat()
+                    }).eq("room_id", room_id).execute()
+                except Exception as db_err:
+                    logger.error("Failed to update round_ends_at in game_state: %s", db_err)
                 
                 await manager.broadcast_to_room(room_id, {
                     "event": "round_start",

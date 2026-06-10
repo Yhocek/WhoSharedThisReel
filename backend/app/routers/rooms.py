@@ -576,6 +576,76 @@ async def websocket_endpoint(
     except Exception as db_err:
         logger.error("Failed to update is_connected status on WebSocket connect: %s", db_err)
 
+    # Catch-up mechanism if room is actively playing (Fix for disappearing options)
+    try:
+        from app.models.enums import RoomStatus
+        room_data = (
+            supabase.table("rooms")
+            .select("status")
+            .eq("id", room_id)
+            .maybe_single()
+            .execute()
+        )
+        if room_data and room_data.data and room_data.data.get("status") == RoomStatus.PLAYING.value:
+            # Fetch current game state
+            gs = (
+                supabase.table("game_state")
+                .select("current_round, current_reel_id, round_ends_at")
+                .eq("room_id", room_id)
+                .maybe_single()
+                .execute()
+            )
+            if gs and gs.data:
+                current_round = gs.data["current_round"]
+                current_reel_id = gs.data["current_reel_id"]
+                round_ends_at_str = gs.data["round_ends_at"]
+                
+                if round_ends_at_str:
+                    round_ends_at = datetime.fromisoformat(round_ends_at_str.replace("Z", "+00:00"))
+                    now = datetime.now(timezone.utc)
+                    # Only catch up if the round is active and timer hasn't expired
+                    if round_ends_at > now:
+                        # Fetch the reel URL
+                        from app.services.game_service import get_reel_source_urls, get_all_players
+                        reel_urls = get_reel_source_urls([current_reel_id], supabase)
+                        reel_url = reel_urls.get(str(current_reel_id), "")
+                        
+                        # Build options
+                        all_players = get_all_players(room_id, supabase)
+                        player_options = [{"id": str(p["id"]), "name": p["display_name"]} for p in all_players]
+                        
+                        # Check if this player has already answered this round
+                        telemetry = (
+                            supabase.table("round_telemetry")
+                            .select("answered, chosen_player_id")
+                            .eq("room_id", room_id)
+                            .eq("round_no", current_round)
+                            .eq("player_id", player_id)
+                            .maybe_single()
+                            .execute()
+                        )
+                        
+                        answered = False
+                        my_chosen_id = None
+                        if telemetry and telemetry.data:
+                            answered = telemetry.data.get("answered", False)
+                            my_chosen_id = telemetry.data.get("chosen_player_id")
+                        
+                        # Send catch-up round_start payload
+                        await websocket.send_json({
+                            "event": "round_start",
+                            "round_no": current_round,
+                            "reel_id": str(current_reel_id),
+                            "reel_url": reel_url,
+                            "options": player_options,
+                            "round_duration_ms": settings.round_duration_ms,
+                            "round_ends_at": round_ends_at_str,
+                            "answered": answered,
+                            "my_chosen_id": str(my_chosen_id) if my_chosen_id else None
+                        })
+    except Exception as catch_up_err:
+        logger.error("Failed to process WebSocket catch-up for player %s: %s", player_id, catch_up_err, exc_info=True)
+
     try:
         while True:
             raw = await websocket.receive_text()

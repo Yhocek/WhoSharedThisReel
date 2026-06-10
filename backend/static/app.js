@@ -882,8 +882,8 @@ function getEmbedUrl(sourceUrl) {
 }
 
 function renderRound(data) {
-  state.answered = false;
-  state.myChosenId = null;
+  state.answered = data.answered || false;
+  state.myChosenId = data.my_chosen_id || null;
   state.currentRoundNo = data.round_no;
   
   // Reconstruct game sidebar layout to wipe out the result standings leaderboard
@@ -934,6 +934,23 @@ function renderRound(data) {
   
   // Reset guess buttons list
   renderGuessButtons(data.options, data.round_no);
+
+  // If catch-up data indicates already answered, disable options immediately
+  if (state.answered) {
+    document.querySelectorAll('.guess-btn').forEach(btn => {
+      btn.disabled = true;
+      if (btn.dataset.playerId === state.myChosenId) {
+        btn.classList.add('guess-selected');
+      }
+    });
+    const statusBox = document.getElementById('guess-status-box');
+    statusBox.className = 'guess-status-box submitted';
+    statusBox.innerHTML = `
+      <div class="guess-status-title">Guess Submitted!</div>
+      <div class="guess-status-desc">Waiting for the round to end...</div>
+    `;
+    statusBox.classList.remove('hidden');
+  }
   
   // Start countdown timer
   if (state.timerInterval) clearInterval(state.timerInterval);
@@ -1003,7 +1020,7 @@ async function submitGuess(playerId) {
     
     // Result confirmation display - hide correctness feedback until round break
     const statusBox = document.getElementById('guess-status-box');
-    statusBox.className = 'guess-status-box correct';
+    statusBox.className = 'guess-status-box submitted';
     statusBox.innerHTML = `
       <div class="guess-status-title">Guess Submitted!</div>
       <div class="guess-status-desc">Waiting for the round to end...</div>
