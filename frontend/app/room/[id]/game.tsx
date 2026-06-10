@@ -12,6 +12,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import api from '../../../lib/api';
 import wsManager from '../../../lib/websocket';
+import { getSession } from '../../../lib/session';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -75,6 +76,16 @@ export default function GameScreen() {
   const [totalScore, setTotalScore] = useState(0);
   const [lastRoundScore, setLastRoundScore] = useState(0);
   const [wasLastCorrect, setWasLastCorrect] = useState(false);
+  const [breakLeaderboard, setBreakLeaderboard] = useState<any[]>([]);
+  const [myPlayerId, setMyPlayerId] = useState<string | null>(null);
+
+  useEffect(() => {
+    getSession().then((session) => {
+      if (session) {
+        setMyPlayerId(session.playerId);
+      }
+    });
+  }, []);
 
   // Animation values
   const countdownAnim = useRef(new Animated.Value(1)).current;
@@ -152,6 +163,7 @@ export default function GameScreen() {
       setAnswered(false);
       setLastRoundScore(0);
       setWasLastCorrect(false);
+      setBreakLeaderboard([]);
       setPhase('playing');
       
       requestAnimationFrame(() => {
@@ -166,6 +178,7 @@ export default function GameScreen() {
       setAnswered(false);
       setLastRoundScore(0);
       setWasLastCorrect(false);
+      setBreakLeaderboard([]);
       setPhase('playing');
 
       // Start countdown when the reel renders (this callback fires after render commit)
@@ -177,6 +190,7 @@ export default function GameScreen() {
     wsManager.onEvent('round_result', (data: any) => {
       if (timerRef.current) clearInterval(timerRef.current);
       setResult(data);
+      setBreakLeaderboard(data.leaderboard || []);
       setPhase('result');
 
       // Animate score pop-in
@@ -289,30 +303,56 @@ export default function GameScreen() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.resultContainer}>
-          <Text style={styles.roundLabel}>Round {round.round_no}</Text>
+          <Text style={styles.roundLabel}>Round {round.round_no} Results</Text>
+          
+          <Text style={styles.resultOwnerAnnouncement}>
+            Shared by: <Text style={styles.ownerHighlight}>{correctPlayer?.name ?? 'Unknown'}</Text>
+          </Text>
 
           <Animated.View
             style={[
-              styles.resultCard,
+              styles.leaderboardBreakContainer,
               {
                 transform: [{ scale: scorePopAnim }],
                 opacity: scorePopAnim,
               },
             ]}
           >
-            <Text style={styles.resultEmoji}>{wasLastCorrect ? '✅' : '❌'}</Text>
-            <Text style={styles.resultTitle}>
-              {wasLastCorrect ? 'Correct!' : 'Wrong!'}
-            </Text>
-            <Text style={styles.resultOwner}>
-              Shared by: {correctPlayer?.name ?? 'Unknown'}
-            </Text>
-            <Text style={styles.resultScore}>
-              +{lastRoundScore} points
-            </Text>
+            {breakLeaderboard.map((player, idx) => {
+              const isMe = player.player_id === myPlayerId;
+              let rankPrefix = '';
+              if (idx === 0) rankPrefix = '👑 ';
+              else if (idx === 1) rankPrefix = '🥈 ';
+              else if (idx === 2) rankPrefix = '🥉 ';
+
+              const guessScore = result.scores ? (result.scores[player.player_id] || 0) : 0;
+              const gainStr = guessScore > 0 ? `+${guessScore}` : '0';
+
+              return (
+                <View 
+                  key={player.player_id} 
+                  style={[
+                    styles.leaderboardItemBreak,
+                    isMe && styles.leaderboardItemBreakMe
+                  ]}
+                >
+                  <Text style={styles.leaderboardRankBreak}>
+                    {rankPrefix || `${idx + 1}`}
+                  </Text>
+                  <Text style={[styles.leaderboardNameBreak, isMe && styles.textMeHighlight]} numberOfLines={1}>
+                    {player.name}
+                  </Text>
+                  <View style={styles.leaderboardScoreBreakContainer}>
+                    <Text style={styles.scoreTextBreak}>{player.score} pts</Text>
+                    <Text style={guessScore > 0 ? styles.gainPositive : styles.gainZero}>
+                      {' '}({gainStr})
+                    </Text>
+                  </View>
+                </View>
+              );
+            })}
           </Animated.View>
 
-          <Text style={styles.totalScore}>Total: {totalScore}</Text>
           <Text style={styles.waitingNext}>Next round starting...</Text>
         </View>
       </SafeAreaView>
@@ -545,42 +585,83 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 32,
+    paddingHorizontal: 24,
+    paddingVertical: 32,
+    width: '100%',
   },
-  resultCard: {
-    alignItems: 'center',
-    backgroundColor: '#16161F',
-    borderRadius: 24,
-    padding: 32,
-    width: SCREEN_WIDTH - 48,
-    borderWidth: 1,
-    borderColor: '#2A2A3A',
-    marginVertical: 24,
-  },
-  resultEmoji: {
-    fontSize: 56,
-    marginBottom: 12,
-  },
-  resultTitle: {
-    color: '#fff',
-    fontSize: 28,
-    fontWeight: '900',
-  },
-  resultOwner: {
+  resultOwnerAnnouncement: {
     color: '#888',
     fontSize: 16,
     marginTop: 8,
+    marginBottom: 24,
+    textAlign: 'center',
   },
-  resultScore: {
-    color: '#405DE6',
-    fontSize: 24,
+  ownerHighlight: {
+    color: '#7C3AED',
     fontWeight: '800',
-    marginTop: 12,
+  },
+  leaderboardBreakContainer: {
+    width: SCREEN_WIDTH - 48,
+    backgroundColor: 'rgba(22, 22, 31, 0.5)',
+    borderRadius: 24,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#2A2A3A',
+    gap: 8,
+  },
+  leaderboardItemBreak: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#16161F',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#2A2A3A',
+  },
+  leaderboardItemBreakMe: {
+    borderColor: '#7C3AED',
+    backgroundColor: 'rgba(124, 58, 237, 0.1)',
+  },
+  leaderboardRankBreak: {
+    width: 32,
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#888',
+  },
+  leaderboardNameBreak: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  textMeHighlight: {
+    color: '#7C3AED',
+    fontWeight: '800',
+  },
+  leaderboardScoreBreakContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  scoreTextBreak: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  gainPositive: {
+    color: '#10B981',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  gainZero: {
+    color: '#888',
+    fontSize: 14,
   },
   waitingNext: {
     color: '#555',
     fontSize: 14,
-    marginTop: 16,
+    marginTop: 24,
+    fontStyle: 'italic',
   },
   // Disconnected
   disconnectEmoji: {

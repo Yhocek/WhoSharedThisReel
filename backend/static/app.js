@@ -17,6 +17,7 @@ const state = {
   timerInterval: null,
   timerMsLeft: 0,
   totalTimerMs: 15000, // standard round duration
+  currentRoundNo: null,
 };
 
 // -----------------------------------------------------------------------------
@@ -89,11 +90,23 @@ function setupEventListeners() {
 
   // Leaderboard View
   document.getElementById('leaderboard-leave-btn').addEventListener('click', handleLeaveRoom);
+  document.getElementById('leaderboard-playagain-btn').addEventListener('click', handlePlayAgainFromLeaderboard);
 
   // Modal Controls
   document.getElementById('close-vault-modal').addEventListener('click', closeVaultModal);
   document.getElementById('vault-modal').addEventListener('click', (e) => {
     if (e.target.id === 'vault-modal') closeVaultModal();
+  });
+  document.getElementById('modal-vault-add-btn').addEventListener('click', handleAddReelToVault);
+
+  // Podium Tab Switchers
+  document.querySelectorAll('.podium-tab-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      document.querySelectorAll('.podium-tab-btn').forEach(b => b.classList.remove('active'));
+      e.target.classList.add('active');
+      activePodiumTab = e.target.dataset.tab;
+      renderLeaderboard(currentLeaderboardData);
+    });
   });
 }
 
@@ -125,6 +138,12 @@ function clearSession() {
   }
   
   disconnectWebSocket();
+
+  // Clear chat window
+  const chatMessagesEl = document.getElementById('chat-messages');
+  if (chatMessagesEl) {
+    chatMessagesEl.innerHTML = '<div class="empty-chat">No messages yet. Say hello!</div>';
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -259,6 +278,12 @@ async function handleJoinRoom() {
 // Lobby View Logic
 // -----------------------------------------------------------------------------
 function enterLobby() {
+  // Clear chat logs when entering lobby
+  const chatMessagesEl = document.getElementById('chat-messages');
+  if (chatMessagesEl) {
+    chatMessagesEl.innerHTML = '<div class="empty-chat">No messages yet. Say hello!</div>';
+  }
+
   showView('lobby-view');
   fetchRoom();
   connectWebSocket();
@@ -503,14 +528,14 @@ function getLocalVault() {
   }
 }
 
-function saveToLocalVault(url) {
+function saveToLocalVault(url, note = '') {
   try {
     const current = getLocalVault();
     const normalized = url.trim();
     if (current.some(item => item.url.toLowerCase() === normalized.toLowerCase())) {
       return; // Already exists
     }
-    const updated = [{ url: normalized, addedAt: Date.now() }, ...current];
+    const updated = [{ url: normalized, addedAt: Date.now(), note: note }, ...current];
     localStorage.setItem(VAULT_STORAGE_KEY, JSON.stringify(updated));
   } catch (e) {
     console.error('Failed to write local vault:', e);
@@ -546,7 +571,7 @@ function renderVaultModalList() {
   const listEl = document.getElementById('vault-modal-list');
   
   if (vaultItems.length === 0) {
-    listEl.innerHTML = `<div class="modal-empty">Kasanız boş. Instagram veya TikTok'tan video paylaşarak veya manuel ekleme yaparak buraya URL biriktirebilirsiniz.</div>`;
+    listEl.innerHTML = `<div class="modal-empty">Reelsleriniz boş. URL ekleyerek buraya video biriktirebilirsiniz.</div>`;
     return;
   }
   
@@ -555,14 +580,20 @@ function renderVaultModalList() {
     const label = isTiktok ? 'TikTok' : item.url.toLowerCase().includes('instagram.com') ? 'Insta' : 'Link';
     const tagClass = isTiktok ? 'tiktok' : 'insta';
     const displayUrl = reelShortcode(item.url);
+    const note = item.note || '';
     
     return `
-      <div class="vault-item">
-        <span class="vault-item-tag ${tagClass}">${label}</span>
-        <span class="vault-item-url" title="${escapeHtml(item.url)}">${escapeHtml(displayUrl)}</span>
-        <div class="vault-actions">
-          <button class="btn btn-primary btn-sm" onclick="addFromVaultToRoom('${escapeJsString(item.url)}')">Ekle</button>
-          <button class="btn btn-danger btn-sm" onclick="deleteFromVault('${escapeJsString(item.url)}')">✕</button>
+      <div class="vault-item" style="flex-direction: column; align-items: stretch; gap: 8px;">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <span class="vault-item-tag ${tagClass}">${label}</span>
+          <span class="vault-item-url" title="${escapeHtml(item.url)}" style="font-weight: bold; max-width: 180px;">${escapeHtml(displayUrl)}</span>
+          <div class="vault-actions">
+            <button class="btn btn-primary btn-sm" onclick="addFromVaultToRoom('${escapeJsString(item.url)}')">Ekle</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteFromVault('${escapeJsString(item.url)}')">✕</button>
+          </div>
+        </div>
+        <div>
+          <input type="text" class="vault-item-note-input" placeholder="Not ekle (Add a note)..." value="${escapeHtml(note)}" onchange="updateVaultItemNote('${escapeJsString(item.url)}', this.value)">
         </div>
       </div>
     `;
@@ -689,7 +720,13 @@ function handleWsEvent(event, data) {
       
     case 'game_end':
       showView('leaderboard-view');
-      renderLeaderboard(data.leaderboard);
+      fetchLeaderboardReport();
+      break;
+      
+    case 'room_reset':
+      showView('lobby-view');
+      fetchRoom();
+      connectWebSocket();
       break;
       
     case 'chat':
@@ -789,6 +826,17 @@ function getEmbedUrl(sourceUrl) {
 
 function renderRound(data) {
   state.answered = false;
+  state.currentRoundNo = data.round_no;
+  
+  // Reconstruct game sidebar layout to wipe out the result standings leaderboard
+  const sidebar = document.querySelector('.game-sidebar');
+  if (sidebar) {
+    sidebar.innerHTML = `
+      <h3>Who shared this video?</h3>
+      <div id="guess-buttons" class="guess-buttons-grid"></div>
+      <div id="guess-status-box" class="guess-status-box hidden"></div>
+    `;
+  }
   
   // Progress Bar reset
   const endsAt = data.round_ends_at ? new Date(data.round_ends_at).getTime() : null;
@@ -886,7 +934,7 @@ async function submitGuess(playerId) {
   const reactionTime = state.totalTimerMs - state.timerMsLeft;
   
   try {
-    const res = await apiCall(`/rooms/${state.roomId}/game/answer`, {
+    const res = await apiCall(`/rooms/${state.roomId}/rounds/${state.currentRoundNo}/answer`, {
       method: 'POST',
       body: JSON.stringify({
         chosen_player_id: playerId,
@@ -917,56 +965,166 @@ function renderRoundResult(data) {
     state.timerInterval = null;
   }
   
-  // Highlights guess selections
-  const owner = state.roomData.players.find(p => p.id === data.owner_id);
-  const ownerName = owner ? owner.display_name : 'Unknown';
+  const sidebar = document.querySelector('.game-sidebar');
+  if (!sidebar) return;
+
+  const owner = data.leaderboard ? data.leaderboard.find(p => p.player_id === data.owner_id) : null;
+  const ownerName = owner ? owner.name : 'Unknown';
   
-  // Show answer alert
-  const statusBox = document.getElementById('guess-status-box');
-  statusBox.className = 'guess-status-box correct';
-  statusBox.innerHTML = `
-    <div class="guess-status-title">Round Results</div>
-    <div class="guess-status-desc">Shared by: <strong>${escapeHtml(ownerName)}</strong></div>
+  const leaderboardHtml = (data.leaderboard || []).map((player, idx) => {
+    let rankEmoji = '';
+    if (idx === 0) rankEmoji = '👑 ';
+    else if (idx === 1) rankEmoji = '🥈 ';
+    else if (idx === 2) rankEmoji = '🥉 ';
+    
+    const guessScore = data.scores ? (data.scores[player.player_id] || 0) : 0;
+    const scoreStr = guessScore > 0 ? `+${guessScore}` : '0';
+    const scoreClass = guessScore > 0 ? 'score-gain-positive' : 'score-gain-zero';
+    
+    return `
+      <div class="leaderboard-item-break">
+        <div class="leaderboard-rank-break">${rankEmoji || (idx + 1)}</div>
+        <div class="leaderboard-name-break">${escapeHtml(player.name)}</div>
+        <div class="leaderboard-score-break">
+          ${player.score} pts <span class="${scoreClass}">(${scoreStr})</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+  
+  sidebar.innerHTML = `
+    <h3 style="margin-bottom: 8px;">Round Results</h3>
+    <div class="round-owner-announcement" style="margin-bottom: 20px; font-size: 15px; color: var(--text-secondary);">
+      Shared by: <strong style="color: var(--primary-color);">${escapeHtml(ownerName)}</strong>
+    </div>
+    <div class="leaderboard-break-list">
+      ${leaderboardHtml}
+    </div>
+    <div style="margin-top: 24px; font-size: 12px; color: var(--text-muted); text-align: center; font-style: italic;">
+      Next round starting in a few seconds...
+    </div>
   `;
-  statusBox.classList.remove('hidden');
-  
-  // Highlight correct button
-  document.querySelectorAll('.guess-btn').forEach(btn => {
-    btn.disabled = true;
-    if (btn.dataset.playerId === data.owner_id) {
-      btn.style.borderColor = 'var(--success-color)';
-      btn.style.backgroundColor = 'rgba(16, 185, 129, 0.2)';
-    }
-  });
 }
 
 // -----------------------------------------------------------------------------
 // Leaderboard View Logic
 // -----------------------------------------------------------------------------
+let currentLeaderboardData = [];
+let activePodiumTab = 'score';
+
+async function fetchLeaderboardReport() {
+  try {
+    const res = await apiCall(`/rooms/${state.roomId}/report`);
+    currentLeaderboardData = res.leaderboard || [];
+    renderLeaderboard(currentLeaderboardData);
+  } catch (err) {
+    showToast('Failed to load final report.', 'error');
+  }
+}
+
+async function handlePlayAgainFromLeaderboard() {
+  try {
+    await apiCall(`/rooms/${state.roomId}/play-again`, { method: 'POST' });
+    showView('lobby-view');
+    fetchRoom();
+    connectWebSocket();
+    showToast('Room reset for a new match!', 'success');
+  } catch (err) {
+    const detail = err.response?.data?.detail;
+    showToast(extractErrorMessage(detail) || 'Failed to restart game.', 'error');
+  }
+}
+
+async function handleAddReelToVault() {
+  const urlInput = document.getElementById('modal-vault-url-input');
+  const noteInput = document.getElementById('modal-vault-note-input');
+  const url = urlInput.value.trim();
+  const note = noteInput.value.trim();
+  
+  if (!url) {
+    showToast('Enter a video URL first.', 'warning');
+    return;
+  }
+  
+  saveToLocalVault(url, note);
+  urlInput.value = '';
+  noteInput.value = '';
+  showToast('Reelslerinize eklendi!', 'success');
+  renderVaultModalList();
+}
+
+function updateVaultItemNote(url, note) {
+  try {
+    const current = getLocalVault();
+    const normalized = url.trim().toLowerCase();
+    const updated = current.map(item => {
+      if (item.url.trim().toLowerCase() === normalized) {
+        return { ...item, note: note.trim() };
+      }
+      return item;
+    });
+    localStorage.setItem(VAULT_STORAGE_KEY, JSON.stringify(updated));
+    showToast('Not kaydedildi!', 'success');
+  } catch (e) {
+    console.error('Failed to save note:', e);
+  }
+}
+
 function renderLeaderboard(leaderboard) {
-  const body = document.getElementById('leaderboard-body');
+  let sorted = [];
+  if (activePodiumTab === 'score') {
+    sorted = [...leaderboard].sort((a, b) => b.total_score - a.total_score);
+  } else if (activePodiumTab === 'speed') {
+    sorted = [...leaderboard].sort((a, b) => {
+      const timeA = a.avg_reaction_ms !== undefined ? a.avg_reaction_ms : 999999;
+      const timeB = b.avg_reaction_ms !== undefined ? b.avg_reaction_ms : 999999;
+      return timeA - timeB;
+    });
+  } else if (activePodiumTab === 'accuracy') {
+    sorted = [...leaderboard].sort((a, b) => b.correct_count - a.correct_count);
+  }
   
-  // Sort leaderboard items by score descending
-  const sorted = [...leaderboard].sort((a, b) => b.score - a.score);
+  const p1 = sorted[0];
+  const p2 = sorted[1];
+  const p3 = sorted[2];
   
-  body.innerHTML = sorted.map((entry, idx) => {
-    const rank = idx + 1;
-    const avgReact = entry.avg_reaction_ms !== undefined && !isNaN(entry.avg_reaction_ms)
-      ? `${(entry.avg_reaction_ms / 1000).toFixed(2)}s`
+  updatePodiumColumn(1, p1, activePodiumTab);
+  updatePodiumColumn(2, p2, activePodiumTab);
+  updatePodiumColumn(3, p3, activePodiumTab);
+}
+
+function updatePodiumColumn(placeNum, player, tabType) {
+  const col = document.getElementById(`podium-col-${placeNum}`);
+  const nameEl = document.getElementById(`podium-name-${placeNum}`);
+  const avatarEl = document.getElementById(`podium-avatar-${placeNum}`);
+  const valEl = document.getElementById(`podium-val-${placeNum}`);
+  
+  if (!player) {
+    col.style.opacity = '0.3';
+    nameEl.textContent = '-';
+    avatarEl.textContent = '?';
+    valEl.textContent = '-';
+    // Remove dancing class if empty
+    nameEl.classList.remove('dancing');
+    return;
+  }
+  
+  col.style.opacity = '1';
+  nameEl.textContent = player.display_name || player.name || 'Anonymous';
+  nameEl.classList.add('dancing'); // Make name dance
+  avatarEl.textContent = (player.display_name || player.name || '?').charAt(0).toUpperCase();
+  
+  let valStr = '';
+  if (tabType === 'score') {
+    valStr = `${player.total_score} pts`;
+  } else if (tabType === 'speed') {
+    valStr = player.avg_reaction_ms !== undefined && player.avg_reaction_ms > 0
+      ? `${(player.avg_reaction_ms / 1000).toFixed(2)}s`
       : '--';
-      
-    const correctCount = entry.correct_count !== undefined ? entry.correct_count : '--';
-      
-    return `
-      <tr class="rank-${rank}">
-        <td><span class="rank-num">${rank}</span></td>
-        <td><strong>${escapeHtml(entry.name)}</strong></td>
-        <td class="text-right"><strong>${entry.score} pts</strong></td>
-        <td class="text-right">${correctCount} rounds</td>
-        <td class="text-right">${avgReact}</td>
-      </tr>
-    `;
-  }).join('');
+  } else if (tabType === 'accuracy') {
+    valStr = `${player.correct_count} correct`;
+  }
+  valEl.textContent = valStr;
 }
 
 // -----------------------------------------------------------------------------

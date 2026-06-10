@@ -358,12 +358,39 @@ async def _resolve_round(room_id: str, round_no: int, supabase: SupabaseClient):
         owner_id = str(records[0]["reel_owner_id"])
         scores = {str(r["player_id"]): r["score"] for r in records}
         
+        # Calculate cumulative scores for all players up to this round
+        cum_telemetry = (
+            supabase.table("round_telemetry")
+            .select("player_id, score")
+            .eq("room_id", room_id)
+            .lte("round_no", round_no)
+            .execute()
+        )
+        cum_records = cum_telemetry.data or []
+        from collections import defaultdict
+        cumulative_scores = defaultdict(int)
+        for r in cum_records:
+            pid = str(r["player_id"])
+            cumulative_scores[pid] += r["score"]
+            
+        # Build sorted leaderboard list
+        leaderboard_data = []
+        for p in active_players:
+            pid = str(p["id"])
+            leaderboard_data.append({
+                "player_id": pid,
+                "name": p["display_name"],
+                "score": cumulative_scores[pid]
+            })
+        leaderboard_data.sort(key=lambda x: x["score"], reverse=True)
+        
         # Broadcast round_result
         await manager.broadcast_to_room(room_id, {
             "event": "round_result",
             "round_no": round_no,
             "owner_id": owner_id,
-            "scores": scores
+            "scores": scores,
+            "leaderboard": leaderboard_data
         })
         
     # Check if it was the last round
@@ -374,6 +401,8 @@ async def _resolve_round(room_id: str, round_no: int, supabase: SupabaseClient):
         # Game over
         supabase.table("rooms").update({"status": RoomStatus.FINISHED.value}).eq("id", room_id).execute()
         task_manager.cancel_room_tasks(room_id)
+        # 4-second delay so clients can show final round break standings
+        await asyncio.sleep(4)
         await manager.broadcast_to_room(room_id, {
             "event": "game_end"
         })
@@ -402,8 +431,8 @@ async def _resolve_round(room_id: str, round_no: int, supabase: SupabaseClient):
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }).eq("room_id", room_id).execute()
             
-            # Small delay to let clients show results
-            await asyncio.sleep(5)
+            # 4-second delay to let clients show results
+            await asyncio.sleep(4)
             
             # Schedule next round
             now = datetime.now(timezone.utc)

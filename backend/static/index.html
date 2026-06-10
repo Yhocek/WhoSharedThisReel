@@ -84,7 +84,7 @@
               <input type="text" id="reel-url-input" placeholder="Instagram Reel or TikTok URL...">
               <button id="add-reel-btn" class="btn btn-primary btn-icon">+</button>
             </div>
-            <button id="open-vault-btn" class="btn btn-vault">📂 Kasadan Seç (Choose from Vault)</button>
+            <button id="open-vault-btn" class="btn btn-vault">🎬 Reelslerim (My Reels)</button>
             <div id="added-reels-list" class="added-reels-list">
               <!-- Rendered dynamically -->
             </div>
@@ -188,36 +188,74 @@
       </div>
 
       <div class="card glass">
-        <table class="leaderboard-table">
-          <thead>
-            <tr>
-              <th style="width: 80px;">Rank</th>
-              <th>Player</th>
-              <th class="text-right">Score</th>
-              <th class="text-right">Correct Guess</th>
-              <th class="text-right">Avg Reaction</th>
-            </tr>
-          </thead>
-          <tbody id="leaderboard-body">
-            <!-- Rendered dynamically -->
-          </tbody>
-        </table>
+        <!-- Tab selector for podium categories -->
+        <div class="podium-tabs">
+          <button class="podium-tab-btn active" data-tab="score">Puan Sıralaması</button>
+          <button class="podium-tab-btn" data-tab="speed">En Hızlı Tahmin Yapan</button>
+          <button class="podium-tab-btn" data-tab="accuracy">En İsabetli Tahmin Yapan</button>
+        </div>
+
+        <!-- Redesigned 3D-step Podiums -->
+        <div class="podium-container" id="podium-container">
+          <!-- 2nd Place (Left) -->
+          <div class="podium-column place-2" id="podium-col-2">
+            <div class="podium-avatar-container">
+              <div class="podium-avatar" id="podium-avatar-2">?</div>
+              <div class="podium-name" id="podium-name-2">-</div>
+            </div>
+            <div class="podium-step">
+              <span class="podium-rank">2</span>
+              <span class="podium-value" id="podium-val-2">-</span>
+            </div>
+          </div>
+
+          <!-- 1st Place (Center - Tallest) -->
+          <div class="podium-column place-1" id="podium-col-1">
+            <div class="podium-avatar-container">
+              <div class="podium-avatar-crown">👑</div>
+              <div class="podium-avatar" id="podium-avatar-1">?</div>
+              <div class="podium-name" id="podium-name-1">-</div>
+            </div>
+            <div class="podium-step">
+              <span class="podium-rank">1</span>
+              <span class="podium-value" id="podium-val-1">-</span>
+            </div>
+          </div>
+
+          <!-- 3rd Place (Right) -->
+          <div class="podium-column place-3" id="podium-col-3">
+            <div class="podium-avatar-container">
+              <div class="podium-avatar" id="podium-avatar-3">?</div>
+              <div class="podium-name" id="podium-name-3">-</div>
+            </div>
+            <div class="podium-step">
+              <span class="podium-rank">3</span>
+              <span class="podium-value" id="podium-val-3">-</span>
+            </div>
+          </div>
+        </div>
 
         <div class="btn-group" style="margin-top: 30px;">
-          <button id="leaderboard-leave-btn" class="btn btn-secondary btn-block">Leave Room</button>
+          <button id="leaderboard-playagain-btn" class="btn btn-primary btn-block">Play Again</button>
+          <button id="leaderboard-leave-btn" class="btn btn-secondary btn-block">Leave Game</button>
         </div>
       </div>
     </div>
 
-    <!-- 5. CHOOSE FROM VAULT MODAL -->
+    <!-- 5. CHOOSE FROM VAULT MODAL (MY REELS) -->
     <div id="vault-modal" class="modal-overlay hidden">
       <div class="modal-content glass">
         <div class="modal-header">
-          <h2>Kasadan Seç (Choose from Vault)</h2>
+          <h2>🎬 Reelslerim (My Reels)</h2>
           <button id="close-vault-modal" class="modal-close">&times;</button>
         </div>
         <div class="modal-body">
-          <div id="vault-modal-list" class="vault-modal-list">
+          <div class="vault-add-form">
+            <input type="text" id="modal-vault-url-input" placeholder="Instagram Reel or TikTok URL...">
+            <input type="text" id="modal-vault-note-input" placeholder="Not ekle (Add a note)..." maxlength="50">
+            <button id="modal-vault-add-btn" class="btn btn-primary btn-sm" style="width:100%; margin-top:8px;">Reelslerime Ekle</button>
+          </div>
+          <div id="vault-modal-list" class="vault-modal-list" style="margin-top: 20px;">
             <!-- Rendered dynamically -->
           </div>
         </div>

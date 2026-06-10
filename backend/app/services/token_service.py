@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from jose import JWTError, jwt
+from jose.exceptions import ExpiredSignatureError
 
 from app.config import settings
 
@@ -69,6 +70,32 @@ def decode_session_token(token: str) -> Optional[dict[str, Any]]:
             algorithms=[ALGORITHM],
         )
         return payload
+    except ExpiredSignatureError:
+        try:
+            # Decode without verifying expiration to inspect room_id
+            payload = jwt.decode(
+                token,
+                settings.session_secret,
+                algorithms=[ALGORITHM],
+                options={"verify_exp": False}
+            )
+            room_id = payload.get("room_id")
+            if room_id:
+                from app.dependencies import get_supabase
+                supabase = get_supabase()
+                room = (
+                    supabase.table("rooms")
+                    .select("status")
+                    .eq("id", room_id)
+                    .maybe_single()
+                    .execute()
+                )
+                if room and room.data and room.data.get("status") in ("playing", "finished"):
+                    return payload
+        except Exception as e:
+            logger.warning("Fallback decode for expired token failed: %s", str(e))
+        return None
     except JWTError as e:
         logger.warning("Session token validation failed: %s", str(e))
         return None
+

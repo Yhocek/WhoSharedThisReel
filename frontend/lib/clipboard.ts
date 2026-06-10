@@ -5,6 +5,7 @@ const CLIPBOARD_STORAGE_KEY = '@reel_game_clipboard_urls';
 export interface ClipboardItem {
   url: string;
   addedAt: number;
+  note?: string;
 }
 
 export async function getClipboard(): Promise<ClipboardItem[]> {
@@ -18,14 +19,17 @@ export async function getClipboard(): Promise<ClipboardItem[]> {
   }
 }
 
-export async function addToClipboard(url: string): Promise<ClipboardItem[]> {
+export async function addToClipboard(url: string, note?: string): Promise<ClipboardItem[]> {
   try {
     const current = await getClipboard();
     const normalizedUrl = url.trim();
     if (current.some(item => item.url.toLowerCase() === normalizedUrl.toLowerCase())) {
+      if (note !== undefined) {
+        return updateClipboardNote(normalizedUrl, note);
+      }
       return current; // Already exists
     }
-    const updated = [{ url: normalizedUrl, addedAt: Date.now() }, ...current];
+    const updated = [{ url: normalizedUrl, addedAt: Date.now(), note }, ...current];
     await AsyncStorage.setItem(CLIPBOARD_STORAGE_KEY, JSON.stringify(updated));
     return updated;
   } catch (error) {
@@ -82,6 +86,24 @@ export async function removeFromClipboard(url: string): Promise<ClipboardItem[]>
   }
 }
 
+export async function updateClipboardNote(url: string, note: string): Promise<ClipboardItem[]> {
+  try {
+    const current = await getClipboard();
+    const normalizedUrl = url.trim().toLowerCase();
+    const updated = current.map(item => {
+      if (item.url.trim().toLowerCase() === normalizedUrl) {
+        return { ...item, note: note.trim() };
+      }
+      return item;
+    });
+    await AsyncStorage.setItem(CLIPBOARD_STORAGE_KEY, JSON.stringify(updated));
+    return updated;
+  } catch (error) {
+    console.error('Failed to update clipboard note:', error);
+    return [];
+  }
+}
+
 export async function clearClipboard(): Promise<void> {
   try {
     await AsyncStorage.removeItem(CLIPBOARD_STORAGE_KEY);
@@ -89,3 +111,4 @@ export async function clearClipboard(): Promise<void> {
     console.error('Failed to clear clipboard:', error);
   }
 }
+

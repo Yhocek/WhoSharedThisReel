@@ -20,6 +20,8 @@ import { useToast } from '../../../components/Toast';
 import {
   getClipboard,
   removeFromClipboard,
+  addToClipboard,
+  updateClipboardNote,
   ClipboardItem,
 } from '../../../lib/clipboard';
 
@@ -65,6 +67,8 @@ export default function LobbyScreen() {
   >([]);
   const [chatInput, setChatInput] = useState('');
   const [isVaultVisible, setIsVaultVisible] = useState(false);
+  const [modalUrl, setModalUrl] = useState('');
+  const [modalNote, setModalNote] = useState('');
 
 
   
@@ -162,12 +166,22 @@ export default function LobbyScreen() {
       fetchRoom();
     });
 
+    wsManager.onEvent('room_reset', () => {
+      fetchRoom();
+    });
+
     return () => {
       wsManager.removeEvent('round_start');
       wsManager.removeEvent('chat');
       wsManager.removeEvent('pool_updated');
+      wsManager.removeEvent('room_reset');
     };
   }, [roomId, router, fetchRoom]);
+
+  // Clear chat logs when entering this room
+  useEffect(() => {
+    setChatMessages([]);
+  }, [roomId]);
 
 
   const handlePaste = useCallback(async () => {
@@ -284,6 +298,20 @@ export default function LobbyScreen() {
     await loadLocalClipboard();
     toast.info('Removed from inbox');
   }, [loadLocalClipboard, toast]);
+
+  const handleModalAdd = useCallback(async () => {
+    if (!modalUrl.trim()) return;
+    await addToClipboard(modalUrl, modalNote);
+    setModalUrl('');
+    setModalNote('');
+    await loadLocalClipboard();
+    toast.success('Added to Reelslerim!');
+  }, [modalUrl, modalNote, loadLocalClipboard, toast]);
+
+  const handleUpdateNote = useCallback(async (url: string, note: string) => {
+    await updateClipboardNote(url, note);
+    await loadLocalClipboard();
+  }, [loadLocalClipboard]);
 
   const handleDeleteReel = useCallback(
     async (reelId: string) => {
@@ -496,7 +524,7 @@ export default function LobbyScreen() {
             onPress={() => setIsVaultVisible(true)}
             activeOpacity={0.7}
           >
-            <Text style={styles.vaultButtonText}>📂 Kasadan Seç (Choose from Vault)</Text>
+            <Text style={styles.vaultButtonText}>🎬 Reelslerim (My Reels)</Text>
           </TouchableOpacity>
 
           {/* Clipboard list */}
@@ -672,46 +700,80 @@ export default function LobbyScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Kasadan Seç (Choose from Vault)</Text>
+              <Text style={styles.modalTitle}>Reelslerim (My Reels)</Text>
               <TouchableOpacity onPress={() => setIsVaultVisible(false)}>
                 <Text style={styles.modalCloseText}>✕</Text>
               </TouchableOpacity>
             </View>
+
+            {/* Direct Add Form inside Modal */}
+            <View style={styles.modalFormContainer}>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Instagram Reel or TikTok URL..."
+                placeholderTextColor="#666"
+                value={modalUrl}
+                onChangeText={setModalUrl}
+                autoCapitalize="none"
+              />
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Not ekle (Add a note)..."
+                placeholderTextColor="#666"
+                value={modalNote}
+                onChangeText={setModalNote}
+                maxLength={50}
+              />
+              <TouchableOpacity style={styles.modalAddSubmitBtn} onPress={handleModalAdd}>
+                <Text style={styles.modalAddSubmitText}>Reelslerime Ekle</Text>
+              </TouchableOpacity>
+            </View>
+
             <ScrollView style={styles.modalScroll}>
               {clipboardItems.length === 0 ? (
-                <Text style={styles.modalEmpty}>Kasanız boş. Instagram veya TikTok'tan video paylaşarak buraya ekleyebilirsiniz.</Text>
+                <Text style={styles.modalEmpty}>Reelsleriniz boş. URL ekleyerek buraya video biriktirebilirsiniz.</Text>
               ) : (
                 <View style={styles.modalList}>
                   {clipboardItems.map((item) => {
                     const isTiktok = item.url.toLowerCase().includes('tiktok.com');
                     return (
-                      <View key={item.url} style={styles.modalItem}>
-                        <View style={[styles.tag, { backgroundColor: isTiktok ? 'rgba(0, 242, 254, 0.15)' : 'rgba(225, 48, 108, 0.15)' }]}>
-                          <Text style={[styles.tagText, { color: isTiktok ? '#00f2fe' : '#E1306C' }]}>
-                            {isTiktok ? 'TikTok' : 'Insta'}
+                      <View key={item.url} style={styles.modalItemWrapper}>
+                        <View style={styles.modalItem}>
+                          <View style={[styles.tag, { backgroundColor: isTiktok ? 'rgba(0, 242, 254, 0.15)' : 'rgba(225, 48, 108, 0.15)' }]}>
+                            <Text style={[styles.tagText, { color: isTiktok ? '#00f2fe' : '#E1306C' }]}>
+                              {isTiktok ? 'TikTok' : 'Insta'}
+                            </Text>
+                          </View>
+                          <Text style={styles.clipboardText} numberOfLines={1}>
+                            {reelShortcode(item.url)}
                           </Text>
+                          <View style={styles.clipboardActions}>
+                            <TouchableOpacity
+                              style={styles.modalAddBtn}
+                              onPress={async () => {
+                                await addVideoToRoom(item.url, true);
+                              }}
+                              disabled={submitting}
+                            >
+                              <Text style={styles.clipAddText}>Ekle</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.clipRemoveButton}
+                              onPress={() => handleRemoveFromClipboard(item.url)}
+                              disabled={submitting}
+                            >
+                              <Text style={styles.clipRemoveText}>✕</Text>
+                            </TouchableOpacity>
+                          </View>
                         </View>
-                        <Text style={styles.clipboardText} numberOfLines={1}>
-                          {reelShortcode(item.url)}
-                        </Text>
-                        <View style={styles.clipboardActions}>
-                          <TouchableOpacity
-                            style={styles.modalAddBtn}
-                            onPress={async () => {
-                              await addVideoToRoom(item.url, true);
-                            }}
-                            disabled={submitting}
-                          >
-                            <Text style={styles.clipAddText}>Ekle</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={styles.clipRemoveButton}
-                            onPress={() => handleRemoveFromClipboard(item.url)}
-                            disabled={submitting}
-                          >
-                            <Text style={styles.clipRemoveText}>✕</Text>
-                          </TouchableOpacity>
-                        </View>
+                        {/* Note editing field under the reel item */}
+                        <TextInput
+                          style={styles.noteInput}
+                          placeholder="Not ekle (Add a note)..."
+                          placeholderTextColor="#555"
+                          value={item.note || ''}
+                          onChangeText={(val) => handleUpdateNote(item.url, val)}
+                        />
                       </View>
                     );
                   })}
@@ -1265,12 +1327,7 @@ const styles = StyleSheet.create({
   modalItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0E0E16',
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#2A2A3A',
-    marginBottom: 8,
+    justifyContent: 'space-between',
   },
   modalAddBtn: {
     backgroundColor: '#10B981',
@@ -1279,6 +1336,55 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  modalFormContainer: {
+    padding: 16,
+    backgroundColor: '#0A0A0F',
+    borderBottomWidth: 1,
+    borderBottomColor: '#2A2A3A',
+    gap: 8,
+  },
+  modalInput: {
+    height: 38,
+    backgroundColor: '#16161F',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    color: '#fff',
+    fontSize: 13,
+    borderWidth: 1,
+    borderColor: '#2A2A3A',
+  },
+  modalAddSubmitBtn: {
+    backgroundColor: '#405DE6',
+    borderRadius: 8,
+    height: 38,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalAddSubmitText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  modalItemWrapper: {
+    backgroundColor: '#0E0E16',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#2A2A3A',
+    marginBottom: 8,
+    gap: 8,
+  },
+  noteInput: {
+    backgroundColor: '#16161F',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    color: '#fff',
+    fontSize: 11,
+    borderWidth: 1,
+    borderColor: '#2A2A3A',
+    marginTop: 4,
   },
 });
 

@@ -145,3 +145,54 @@ async def get_report(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to generate report. Please try again.",
         )
+
+
+@router.post("/{room_id}/play-again")
+async def play_again(
+    room_id: str,
+    player: dict = Depends(get_current_player),
+    supabase: SupabaseClient = Depends(get_supabase),
+) -> dict:
+    """Reset the room to lobby state, delete telemetry, extend expiration (Host or any player)."""
+    from app.models.enums import RoomStatus
+    from datetime import datetime, timezone, timedelta
+
+    # 1. Fetch room status
+    room = supabase.table("rooms").select("status").eq("id", room_id).maybe_single().execute()
+    if not room or not room.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Room not found.",
+        )
+    
+    current_status = room.data.get("status")
+    
+    # If already in lobby, return success
+    if current_status == RoomStatus.WAITING.value:
+        return {"status": "success"}
+        
+    if current_status != RoomStatus.FINISHED.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Can only play again when the current game is finished.",
+        )
+    
+    # 2. Delete old telemetry records
+    supabase.table("round_telemetry").delete().eq("room_id", room_id).execute()
+    
+    # 3. Extend room expiration by another 180 minutes (3 hours)
+    new_expires_at = datetime.now(timezone.utc) + timedelta(hours=3)
+    
+    supabase.table("rooms").update({
+        "status": RoomStatus.WAITING.value,
+        "expires_at": new_expires_at.isoformat()
+    }).eq("id", room_id).execute()
+    
+    # 4. Broadcast room_reset WebSocket event to all room players
+    from app.services.websocket_manager import manager
+    await manager.broadcast_to_room(room_id, {
+        "event": "room_reset"
+    })
+    
+    return {"status": "success"}
+

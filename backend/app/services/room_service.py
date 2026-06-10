@@ -151,6 +151,18 @@ async def join_room(
     room = room_result.data
     room_id = room["id"]
 
+    # Check if room has expired
+    expires_at_str = room.get("expires_at")
+    if expires_at_str:
+        if isinstance(expires_at_str, str):
+            expires_at = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
+        else:
+            expires_at = expires_at_str
+        
+        if expires_at < datetime.now(timezone.utc):
+            supabase.table("rooms").update({"status": RoomStatus.EXPIRED.value}).eq("id", room_id).execute()
+            raise ValueError("This room has expired.")
+
     # Check player count
     players_result = (
         supabase.table("room_players")
@@ -237,6 +249,18 @@ async def get_room_details(
 
     if not room_result or not room_result.data:
         raise ValueError("Room not found.")
+
+    room = room_result.data
+    expires_at_str = room.get("expires_at")
+    if expires_at_str:
+        if isinstance(expires_at_str, str):
+            expires_at = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
+        else:
+            expires_at = expires_at_str
+        
+        if expires_at < datetime.now(timezone.utc) and room["status"] == RoomStatus.WAITING.value:
+            supabase.table("rooms").update({"status": RoomStatus.EXPIRED.value}).eq("id", room_id).execute()
+            raise ValueError("This room has expired.")
 
     players_result = (
         supabase.table("room_players")
