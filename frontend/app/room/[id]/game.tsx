@@ -316,12 +316,14 @@ export default function GameScreen() {
 
   // Result phase
   if (phase === 'result' && result) {
-    const correctPlayer = round.options.find((p) => p.id === result.owner_id);
+    const correctPlayer = (round?.options || breakLeaderboard || []).find(
+      (p: any) => p.id === result.owner_id || p.player_id === result.owner_id
+    );
 
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.resultContainer}>
-          <Text style={styles.roundLabel}>Round {round.round_no} Results</Text>
+          <Text style={styles.roundLabel}>Round {round?.round_no ?? result.round_no} Results</Text>
           
           <Text style={styles.resultOwnerAnnouncement}>
             Shared by: <Text style={styles.ownerHighlight}>{correctPlayer?.name ?? 'Unknown'}</Text>

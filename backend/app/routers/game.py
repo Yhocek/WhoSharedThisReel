@@ -117,6 +117,7 @@ async def disconnect_from_game(
         room_id=room_id,
         player_id=player["sub"],
         supabase=supabase,
+        is_explicit=True,
     )
 
 

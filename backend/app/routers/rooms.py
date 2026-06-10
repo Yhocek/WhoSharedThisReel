@@ -289,6 +289,7 @@ async def leave_room_endpoint(
         room_id=room_id,
         player_id=player["sub"],
         supabase=supabase,
+        is_explicit=True,
     )
 
 

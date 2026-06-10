@@ -407,13 +407,14 @@ async def remove_player(
     room_id: str,
     player_id: str,
     supabase: SupabaseClient,
+    is_explicit: bool = False,
 ) -> Dict[str, str]:
     """
     Unified leave/disconnect handler (Fix 3).
 
     Handles both explicit leave (lobby) and mid-match disconnect:
       - Always sets is_connected = False.
-      - If the room is currently 'playing', also zeros out all
+      - If is_explicit is True and the room is currently 'playing', also zeros out all
         unanswered telemetry rows for this player (score 0 per spec).
       - If the room is 'waiting', no telemetry exists yet — just disconnect.
 
@@ -433,8 +434,8 @@ async def remove_player(
         "is_connected": False,
     }).eq("room_id", room_id).eq("id", player_id).execute()
 
-    # If room is playing, zero out unanswered rounds for this player
-    if room_result and room_result.data and room_result.data.get("status") == RoomStatus.PLAYING.value:
+    # If room is playing and it's an explicit leave, zero out unanswered rounds for this player
+    if is_explicit and room_result and room_result.data and room_result.data.get("status") == RoomStatus.PLAYING.value:
         supabase.table("round_telemetry").update({
             "answered": True,
             "is_correct": False,
@@ -442,7 +443,7 @@ async def remove_player(
         }).eq("room_id", room_id).eq("player_id", player_id).eq("answered", False).execute()
 
         logger.info(
-            "Player %s disconnected from active match in room %s — remaining rounds zeroed.",
+            "Player %s explicitly disconnected/left active match in room %s — remaining rounds zeroed.",
             player_id,
             room_id,
         )
