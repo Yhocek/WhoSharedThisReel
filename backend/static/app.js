@@ -44,7 +44,7 @@ async function initApp() {
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
     if (code) {
-      document.getElementById('room-code-input').value = code.trim().toUpperCase();
+      document.getElementById('room-code-input').value = code.trim().replace(/[^0-9]/g, '');
       showToast(`Ready to join room ${code}!`, 'info');
     }
     showView('welcome-view');
@@ -58,6 +58,11 @@ function setupEventListeners() {
   // Welcome View
   document.getElementById('create-room-btn').addEventListener('click', handleCreateRoom);
   document.getElementById('join-room-btn').addEventListener('click', handleJoinRoom);
+  
+  // Sanitize room-code-input to digits only
+  document.getElementById('room-code-input').addEventListener('input', (e) => {
+    e.target.value = e.target.value.replace(/[^0-9]/g, '');
+  });
 
   // Lobby View
   document.getElementById('room-code-display').addEventListener('click', copyRoomCode);
@@ -221,14 +226,14 @@ async function handleCreateRoom() {
 
 async function handleJoinRoom() {
   const name = document.getElementById('nickname-input').value.trim();
-  const code = document.getElementById('room-code-input').value.trim().toUpperCase();
+  const code = document.getElementById('room-code-input').value.trim().replace(/[^0-9]/g, '');
   
   if (!name) {
     showToast('Please enter a display name first.', 'warning');
     return;
   }
   if (code.length !== 6) {
-    showToast('Room codes must be exactly 6 letters.', 'warning');
+    showToast('Room codes must be exactly 6 numbers.', 'warning');
     return;
   }
   

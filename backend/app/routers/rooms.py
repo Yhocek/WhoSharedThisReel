@@ -77,14 +77,14 @@ async def create_room_endpoint(
     "/join",
     response_model=RoomJoinedResponse,
     summary="Join a room by code",
-    description="Join an existing room using the 6-character room code.",
+    description="Join an existing room using the 6-digit numeric room code.",
 )
 async def join_room_endpoint(
     request: JoinRoomRequest,
     user_id: Optional[str] = Depends(get_optional_user_id),
     supabase: SupabaseClient = Depends(get_supabase),
 ) -> RoomJoinedResponse:
-    """Join a room by its 6-character code."""
+    """Join a room by its 6-digit numeric code."""
     try:
         result = await room_service.join_room(
             room_code=request.room_code,

@@ -28,7 +28,7 @@ class JoinRoomRequest(BaseModel):
     """Join an existing room by code."""
     room_code: str = Field(
         ..., min_length=6, max_length=6,
-        description="6-character room code",
+        description="6-digit numeric room code",
     )
     display_name: str = Field(
         ..., min_length=2, max_length=30,

@@ -50,14 +50,14 @@ export default function HomeScreen() {
 
   const handleJoinRoom = useCallback(async () => {
     const name = displayName.trim();
-    const code = roomCode.trim().toUpperCase();
+    const code = roomCode.trim().replace(/[^0-9]/g, '');
 
     if (!name) {
       toast.info('You need a display name to join a room.');
       return;
     }
     if (code.length !== 6) {
-      toast.info('Room codes are exactly 6 characters.');
+      toast.info('Room codes are exactly 6 digits.');
       return;
     }
 
@@ -112,11 +112,11 @@ export default function HomeScreen() {
             <Text style={styles.inputLabel}>ROOM CODE</Text>
             <TextInput
               style={[styles.input, styles.codeInput]}
-              placeholder="e.g. A1B2C3"
+              placeholder="e.g. 123456"
               placeholderTextColor="#666"
               value={roomCode}
-              onChangeText={(text) => setRoomCode(text.toUpperCase())}
-              autoCapitalize="characters"
+              onChangeText={(text) => setRoomCode(text.replace(/[^0-9]/g, ''))}
+              keyboardType="numeric"
               maxLength={6}
             />
 
