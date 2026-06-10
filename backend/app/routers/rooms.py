@@ -202,6 +202,16 @@ async def ingest_and_vault_endpoint(
             detail=str(e),
         )
 
+    # Broadcast event so all clients update their pool status
+    try:
+        await manager.broadcast_to_room(room_id, {
+            "event": "pool_updated",
+            "player_id": player["sub"],
+            "action": "added"
+        })
+    except Exception as e:
+        logger.warning("Failed to broadcast pool_updated event: %s", str(e))
+
     return {
         "status": "ingested_and_added",
         "reel_id": reel_id,
@@ -239,6 +249,16 @@ async def add_to_vault_endpoint(
             reel_id=request.reel_id,
             supabase=supabase,
         )
+        # Broadcast event so all clients update their pool status
+        try:
+            await manager.broadcast_to_room(room_id, {
+                "event": "pool_updated",
+                "player_id": player["sub"],
+                "action": "added"
+            })
+        except Exception as e:
+            logger.warning("Failed to broadcast pool_updated event: %s", str(e))
+
         return {"status": "added", "vault_reel_id": result["id"]}
     except ValueError as e:
         raise HTTPException(
@@ -290,12 +310,23 @@ async def remove_from_vault_endpoint(
         )
 
     try:
-        return await room_service.remove_reel_from_vault(
+        result = await room_service.remove_reel_from_vault(
             room_id=room_id,
             reel_id=reel_id,
             player_id=player["sub"],
             supabase=supabase,
         )
+        # Broadcast event so all clients update their pool status
+        try:
+            await manager.broadcast_to_room(room_id, {
+                "event": "pool_updated",
+                "player_id": player["sub"],
+                "action": "removed"
+            })
+        except Exception as e:
+            logger.warning("Failed to broadcast pool_updated event: %s", str(e))
+
+        return result
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

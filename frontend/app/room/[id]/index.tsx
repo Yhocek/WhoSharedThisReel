@@ -158,11 +158,16 @@ export default function LobbyScreen() {
       ]);
     });
 
+    wsManager.onEvent('pool_updated', () => {
+      fetchRoom();
+    });
+
     return () => {
       wsManager.removeEvent('round_start');
       wsManager.removeEvent('chat');
+      wsManager.removeEvent('pool_updated');
     };
-  }, [roomId, router]);
+  }, [roomId, router, fetchRoom]);
 
 
   const handlePaste = useCallback(async () => {

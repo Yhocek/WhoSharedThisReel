@@ -695,6 +695,10 @@ function handleWsEvent(event, data) {
     case 'chat':
       appendChatMessage(data);
       break;
+      
+    case 'pool_updated':
+      fetchRoom();
+      break;
   }
 }
 
