@@ -19,6 +19,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query
 from supabase import Client as SupabaseClient
 
+from app.config import settings
+
 from app.dependencies import get_current_player, get_optional_user_id, get_supabase
 from app.services.websocket_manager import manager
 from app.services.token_service import decode_session_token
