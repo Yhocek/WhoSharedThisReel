@@ -9,8 +9,11 @@ import {
   ActivityIndicator,
   ScrollView,
   Modal,
+  Alert,
+  Platform,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import api, { extractErrorMessage } from '../../../lib/api';
@@ -58,6 +61,7 @@ export default function LobbyScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [deletingReelId, setDeletingReelId] = useState<string | null>(null);
   const [selectedRounds, setSelectedRounds] = useState(10);
+  const [userSelectedRoundsManually, setUserSelectedRoundsManually] = useState(false);
   const [isHost, setIsHost] = useState(false);
   const [myPlayerId, setMyPlayerId] = useState('');
   const [startError, setStartError] = useState('');
@@ -69,6 +73,28 @@ export default function LobbyScreen() {
   const [isVaultVisible, setIsVaultVisible] = useState(false);
   const [modalUrl, setModalUrl] = useState('');
   const [modalNote, setModalNote] = useState('');
+  const [playerDeviceIds, setPlayerDeviceIds] = useState<Record<string, string>>({});
+  const [recentPlayers, setRecentPlayers] = useState<any[]>([]);
+  const [myDeviceId, setMyDeviceId] = useState('');
+
+  useEffect(() => {
+    AsyncStorage.getItem('device_id').then((id) => {
+      if (id) {
+        setMyDeviceId(id);
+      }
+    });
+  }, []);
+
+  const loadRecentPlayers = useCallback(async () => {
+    try {
+      const val = await AsyncStorage.getItem('recent_players');
+      if (val) {
+        setRecentPlayers(JSON.parse(val));
+      }
+    } catch (e) {
+      console.error('Failed to load recent players', e);
+    }
+  }, []);
 
 
   
@@ -89,12 +115,13 @@ export default function LobbyScreen() {
         if (pollRef.current) clearInterval(pollRef.current);
         router.push(`/room/${roomId}/game`);
       }
+      loadRecentPlayers();
     } catch (error: any) {
       console.error('Failed to fetch room:', error);
     } finally {
       setLoading(false);
     }
-  }, [roomId, router]);
+  }, [roomId, router, loadRecentPlayers]);
 
   useEffect(() => {
     // Get session to know if we're host
@@ -135,14 +162,30 @@ export default function LobbyScreen() {
     }
   }, [room, myPlayerId]);
 
+  useEffect(() => {
+    if (room && !userSelectedRoundsManually) {
+      const totalReels = Object.values(room.vault_counts || {}).reduce((a: number, b: number) => a + b, 0);
+      const connected = room.players.filter((p) => p.is_connected);
+      const playerCount = connected.length;
+      const defaultRounds = playerCount > 0 ? Math.floor(totalReels / playerCount) + (playerCount * 2) : 10;
+      setSelectedRounds(defaultRounds);
+    }
+  }, [room, userSelectedRoundsManually]);
+
   // Connect WebSocket and listen for events
   useEffect(() => {
     if (!roomId) return;
 
     if (wsManager.state !== 'connected' && wsManager.state !== 'connecting') {
-      wsManager.connect(roomId).catch((err) => {
+      wsManager.connect(roomId).then(() => {
+        if (myDeviceId) {
+          wsManager.send({ type: 'device_id', device_id: myDeviceId });
+        }
+      }).catch((err) => {
         console.error('[WS] Lobby connect error:', err);
       });
+    } else if (wsManager.state === 'connected' && myDeviceId) {
+      wsManager.send({ type: 'device_id', device_id: myDeviceId });
     }
 
     wsManager.onEvent('round_start', () => {
@@ -162,6 +205,22 @@ export default function LobbyScreen() {
       ]);
     });
 
+    wsManager.onEvent('device_id', (data: any) => {
+      setPlayerDeviceIds((prev) => ({
+        ...prev,
+        [data.player_id]: data.device_id,
+      }));
+    });
+
+    wsManager.onEvent('ws_close', (data: any) => {
+      if (data && data.code === 4001) {
+        toast.error('Odadan atıldınız.');
+        clearSession().then(() => {
+          router.replace('/');
+        });
+      }
+    });
+
     wsManager.onEvent('pool_updated', () => {
       fetchRoom();
     });
@@ -173,10 +232,84 @@ export default function LobbyScreen() {
     return () => {
       wsManager.removeEvent('round_start');
       wsManager.removeEvent('chat');
+      wsManager.removeEvent('device_id');
+      wsManager.removeEvent('ws_close');
       wsManager.removeEvent('pool_updated');
       wsManager.removeEvent('room_reset');
     };
-  }, [roomId, router, fetchRoom]);
+  }, [roomId, router, fetchRoom, myDeviceId, toast]);
+
+  // Save recent players to AsyncStorage when we have device IDs
+  useEffect(() => {
+    if (room && room.players && myPlayerId) {
+      const otherPlayers = room.players.filter(p => p.id !== myPlayerId && p.is_connected);
+      if (otherPlayers.length > 0) {
+        AsyncStorage.getItem('recent_players').then((val) => {
+          let list = val ? JSON.parse(val) : [];
+          otherPlayers.forEach(p => {
+            const devId = playerDeviceIds[p.id];
+            if (devId) {
+              const idx = list.findIndex((item: any) => item.deviceId === devId);
+              if (idx > -1) {
+                list[idx].name = p.display_name;
+                list[idx].lastPlayed = Date.now();
+              } else {
+                list.push({ name: p.display_name, deviceId: devId, lastPlayed: Date.now() });
+              }
+            }
+          });
+          list.sort((a: any, b: any) => b.lastPlayed - a.lastPlayed);
+          list = list.slice(0, 10);
+          AsyncStorage.setItem('recent_players', JSON.stringify(list));
+        });
+      }
+    }
+  }, [room, myPlayerId, playerDeviceIds]);
+
+  const confirmKickPlayer = (playerId: string, name: string) => {
+    if (Platform.OS === 'web') {
+      const confirm = window.confirm(`Oyuncuyu atmak istediğinize emin misiniz? (${name})`);
+      if (confirm) {
+        kickPlayer(playerId);
+      }
+    } else {
+      Alert.alert(
+        'Oyuncuyu At',
+        `Oyuncuyu atmak istediğinize emin misiniz? (${name})`,
+        [
+          { text: 'İptal', style: 'cancel' },
+          {
+            text: 'Evet, At',
+            style: 'destructive',
+            onPress: () => kickPlayer(playerId),
+          },
+        ]
+      );
+    }
+  };
+
+  const kickPlayer = async (playerId: string) => {
+    try {
+      await api.delete(`/rooms/${roomId}/players/${playerId}`);
+      toast.success('Oyuncu atıldı.');
+      fetchRoom();
+    } catch (error: any) {
+      toast.error(extractErrorMessage(error.response?.data?.detail) || 'Failed to kick player.');
+    }
+  };
+
+  const handleInvitePlayer = async (deviceId: string, name: string) => {
+    try {
+      await api.post(`/rooms/${roomId}/invite`, {
+        target_device_id: deviceId,
+        room_code: room?.code || '',
+        host_name: room?.players.find(p => p.is_host)?.display_name || 'Host'
+      });
+      toast.success(`${name} davet edildi!`);
+    } catch (error: any) {
+      toast.error(extractErrorMessage(error.response?.data?.detail) || 'Failed to send invite.');
+    }
+  };
 
   // Clear chat logs when entering this room
   useEffect(() => {
@@ -400,7 +533,7 @@ export default function LobbyScreen() {
     (p) => (room.vault_counts?.[p.id] ?? 0) >= minRequired
   );
 
-  // Extract a short display from a Reel or TikTok URL
+  // Extract a short display from a Reel, TikTok, or YouTube Shorts URL
   const reelShortcode = (url: string) => {
     try {
       if (url.toLowerCase().includes('instagram.com')) {
@@ -412,6 +545,17 @@ export default function LobbyScreen() {
         if (match) return `TT: ${match[1].slice(0, 11)}`;
         const parsed = new URL(url);
         return `TT: ${parsed.pathname.slice(0, 15)}`;
+      }
+      if (url.toLowerCase().includes('youtube.com/shorts/') || url.toLowerCase().includes('youtu.be/')) {
+        let videoId = null;
+        if (url.toLowerCase().includes('youtube.com/shorts/')) {
+          const match = url.match(/shorts\/([A-Za-z0-9_-]+)/);
+          if (match) videoId = match[1];
+        } else {
+          const match = url.match(/youtu\.be\/([A-Za-z0-9_-]+)/);
+          if (match) videoId = match[1];
+        }
+        return videoId ? `YT: ${videoId.slice(0, 11)}` : `YT: ${url.slice(-15)}`;
       }
       return url.slice(0, 30);
     } catch {
@@ -452,9 +596,39 @@ export default function LobbyScreen() {
                   <Text style={styles.youBadgeText}>YOU</Text>
                 </View>
               )}
+              {isHost && !item.is_host && (
+                <TouchableOpacity
+                  style={styles.kickButton}
+                  onPress={() => confirmKickPlayer(item.id, item.display_name)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.kickButtonText}>✕</Text>
+                </TouchableOpacity>
+              )}
             </View>
           ))}
         </View>
+
+        {/* Invite Friends / Recent Friends */}
+        {isHost && recentPlayers.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Eski Arkadaşlar (Recent Friends)</Text>
+            <View style={styles.recentPlayersCard}>
+              {recentPlayers.map((friend) => (
+                <View key={friend.deviceId} style={styles.recentPlayerRow}>
+                  <Text style={styles.recentPlayerName} numberOfLines={1}>{friend.name}</Text>
+                  <TouchableOpacity
+                    style={styles.inviteButton}
+                    onPress={() => handleInvitePlayer(friend.deviceId, friend.name)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.inviteButtonText}>Davet Et</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
 
         {/* Pool Status Card */}
         <View style={styles.section}>
@@ -539,11 +713,12 @@ export default function LobbyScreen() {
               <View style={styles.clipboardList}>
                 {clipboardItems.map((item) => {
                   const isTiktok = item.url.toLowerCase().includes('tiktok.com');
+                  const isYoutube = item.url.toLowerCase().includes('youtube.com') || item.url.toLowerCase().includes('youtu.be');
                   return (
                     <View key={item.url} style={styles.clipboardItem}>
-                      <View style={[styles.tag, { backgroundColor: isTiktok ? 'rgba(0, 242, 254, 0.15)' : 'rgba(225, 48, 108, 0.15)' }]}>
-                        <Text style={[styles.tagText, { color: isTiktok ? '#00f2fe' : '#E1306C' }]}>
-                          {isTiktok ? 'TikTok' : 'Insta'}
+                      <View style={[styles.tag, { backgroundColor: isTiktok ? 'rgba(0, 242, 254, 0.15)' : isYoutube ? 'rgba(239, 68, 68, 0.15)' : 'rgba(225, 48, 108, 0.15)' }]}>
+                        <Text style={[styles.tagText, { color: isTiktok ? '#00f2fe' : isYoutube ? '#EF4444' : '#E1306C' }]}>
+                          {isTiktok ? 'TikTok' : isYoutube ? 'YouTube' : 'Insta'}
                         </Text>
                       </View>
                       <Text style={styles.clipboardText} numberOfLines={1}>
@@ -552,7 +727,7 @@ export default function LobbyScreen() {
                       <View style={styles.clipboardActions}>
                         <TouchableOpacity
                           style={styles.clipAddButton}
-                          onPress={() => addVideoToRoom(item.url, true)}
+                          onPress={() => addVideoToRoom(item.url, false)}
                           disabled={submitting}
                         >
                           <Text style={styles.clipAddText}>Add</Text>
@@ -651,7 +826,10 @@ export default function LobbyScreen() {
                   <TouchableOpacity
                     key={rounds}
                     style={[styles.roundButton, selectedRounds === rounds && styles.roundButtonActive]}
-                    onPress={() => setSelectedRounds(rounds)}
+                    onPress={() => {
+                      setSelectedRounds(rounds);
+                      setUserSelectedRoundsManually(true);
+                    }}
                     activeOpacity={0.7}
                   >
                     <Text style={[styles.roundButtonText, selectedRounds === rounds && styles.roundButtonTextActive]}>
@@ -736,12 +914,13 @@ export default function LobbyScreen() {
                 <View style={styles.modalList}>
                   {clipboardItems.map((item) => {
                     const isTiktok = item.url.toLowerCase().includes('tiktok.com');
+                    const isYoutube = item.url.toLowerCase().includes('youtube.com') || item.url.toLowerCase().includes('youtu.be');
                     return (
                       <View key={item.url} style={styles.modalItemWrapper}>
                         <View style={styles.modalItem}>
-                          <View style={[styles.tag, { backgroundColor: isTiktok ? 'rgba(0, 242, 254, 0.15)' : 'rgba(225, 48, 108, 0.15)' }]}>
-                            <Text style={[styles.tagText, { color: isTiktok ? '#00f2fe' : '#E1306C' }]}>
-                              {isTiktok ? 'TikTok' : 'Insta'}
+                          <View style={[styles.tag, { backgroundColor: isTiktok ? 'rgba(0, 242, 254, 0.15)' : isYoutube ? 'rgba(239, 68, 68, 0.15)' : 'rgba(225, 48, 108, 0.15)' }]}>
+                            <Text style={[styles.tagText, { color: isTiktok ? '#00f2fe' : isYoutube ? '#EF4444' : '#E1306C' }]}>
+                              {isTiktok ? 'TikTok' : isYoutube ? 'YouTube' : 'Insta'}
                             </Text>
                           </View>
                           <Text style={styles.clipboardText} numberOfLines={1}>
@@ -751,7 +930,7 @@ export default function LobbyScreen() {
                             <TouchableOpacity
                               style={styles.modalAddBtn}
                               onPress={async () => {
-                                await addVideoToRoom(item.url, true);
+                                await addVideoToRoom(item.url, false);
                               }}
                               disabled={submitting}
                             >
@@ -1385,6 +1564,51 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#2A2A3A',
     marginTop: 4,
+  },
+  kickButton: {
+    padding: 6,
+    marginLeft: 8,
+    borderRadius: 6,
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  kickButtonText: {
+    color: '#EF4444',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  recentPlayersCard: {
+    backgroundColor: '#16161F',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#2A2A3A',
+    padding: 12,
+    gap: 8,
+  },
+  recentPlayerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  recentPlayerName: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+    flex: 1,
+    marginRight: 12,
+  },
+  inviteButton: {
+    backgroundColor: '#7C3AED',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  inviteButtonText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
   },
 });
 

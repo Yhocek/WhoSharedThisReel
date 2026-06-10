@@ -27,6 +27,14 @@ TIKTOK_URL_PATTERN = re.compile(
     r"^https://(?:[a-zA-Z0-9-]+\.)?tiktok\.com/([A-Za-z0-9_./@-]+)$", re.IGNORECASE
 )
 
+YOUTUBE_URL_PATTERN = re.compile(
+    r"^https://(?:[a-zA-Z0-9-]+\.)?youtube\.com/shorts/([A-Za-z0-9_-]+)/?\??.*$", re.IGNORECASE
+)
+
+YOUTUBE_BE_PATTERN = re.compile(
+    r"^https://youtu\.be/([A-Za-z0-9_-]+)/?\??.*$", re.IGNORECASE
+)
+
 # Custom User-Agent for requests
 DEFAULT_HEADERS = {
     "User-Agent": (
@@ -99,12 +107,6 @@ def validate_instagram_url(url: str) -> tuple[bool, str, Optional[str]]:
 
 
 def validate_tiktok_url(url: str) -> tuple[bool, str, Optional[str]]:
-    """
-    Validate that a URL is a TikTok video link.
-
-    Returns:
-        (is_valid, normalized_url, shortcode)
-    """
     url = url.strip()
     parsed = urlparse(url)
     if parsed.scheme != "https":
@@ -124,6 +126,30 @@ def validate_tiktok_url(url: str) -> tuple[bool, str, Optional[str]]:
     return True, normalized, shortcode
 
 
+def validate_youtube_url(url: str) -> tuple[bool, str, Optional[str]]:
+    url = url.strip()
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        return False, url, None
+    if not parsed.hostname or not any(x in parsed.hostname.lower() for x in ("youtube.com", "youtu.be")):
+        return False, url, None
+
+    shortcode = None
+    match = YOUTUBE_URL_PATTERN.match(url)
+    if match:
+        shortcode = match.group(1)
+    else:
+        match_be = YOUTUBE_BE_PATTERN.match(url)
+        if match_be:
+            shortcode = match_be.group(1)
+
+    if not shortcode:
+        return False, url, None
+
+    normalized = f"https://www.youtube.com/shorts/{shortcode}"
+    return True, normalized, shortcode
+
+
 def validate_media_url(url: str) -> tuple[bool, str, Optional[str], str]:
     """
     Validate url against supported platforms.
@@ -138,6 +164,10 @@ def validate_media_url(url: str) -> tuple[bool, str, Optional[str], str]:
     is_tt, normalized_tt, shortcode_tt = validate_tiktok_url(url)
     if is_tt:
         return True, normalized_tt, shortcode_tt, "TikTok"
+
+    is_yt, normalized_yt, shortcode_yt = validate_youtube_url(url)
+    if is_yt:
+        return True, normalized_yt, shortcode_yt, "YouTube"
 
     return False, url, None, "Unknown"
 
@@ -332,6 +362,59 @@ async def fetch_tiktok_metadata(url: str, client: httpx.AsyncClient) -> ReelMeta
     return metadata
 
 
+async def fetch_youtube_metadata(url: str, client: httpx.AsyncClient) -> ReelMetadata:
+    """
+    Fetch metadata for a YouTube video using YouTube's public oEmbed endpoint.
+    """
+    is_valid, normalized_url, shortcode = validate_youtube_url(url)
+    if not is_valid or shortcode is None:
+        meta = ReelMetadata(source_url=url, shortcode="", provider="YouTube")
+        meta.errors.append(f"Invalid YouTube URL: {url}")
+        return meta
+
+    metadata = ReelMetadata(source_url=normalized_url, shortcode=shortcode, provider="YouTube")
+
+    try:
+        response = await client.get(
+            "https://www.youtube.com/oembed",
+            params={"url": normalized_url, "format": "json"},
+            headers=DEFAULT_HEADERS,
+            timeout=REQUEST_TIMEOUT,
+        )
+
+        if response.status_code != 200:
+            metadata.errors.append(
+                f"YouTube oEmbed returned HTTP {response.status_code}. "
+                "The video may be private or unavailable."
+            )
+            metadata.creator_url = normalized_url
+            return metadata
+
+        data = response.json()
+
+        metadata.creator_handle = data.get("author_name")
+        metadata.creator_url = data.get("author_url") or normalized_url
+        metadata.thumbnail_url = data.get("thumbnail_url")
+        if metadata.thumbnail_url:
+            metadata.thumbnail_fetched_at = datetime.now(timezone.utc)
+
+        metadata.caption = data.get("title")
+        metadata.oembed_html = data.get("html")
+
+        if not metadata.has_valid_attribution:
+            metadata.creator_url = normalized_url
+
+    except httpx.TimeoutException:
+        metadata.errors.append(f"Request to YouTube oEmbed timed out after {REQUEST_TIMEOUT}s.")
+        metadata.creator_url = normalized_url
+    except Exception as e:
+        logger.exception("Unexpected error parsing YouTube metadata")
+        metadata.errors.append(f"Unexpected YouTube parsing error: {str(e)}")
+        metadata.creator_url = normalized_url
+
+    return metadata
+
+
 async def fetch_media_metadata(
     url: str, client: httpx.AsyncClient
 ) -> ReelMetadata:
@@ -346,6 +429,8 @@ async def fetch_media_metadata(
 
     if provider == "TikTok":
         return await fetch_tiktok_metadata(normalized_url, client)
+    elif provider == "YouTube":
+        return await fetch_youtube_metadata(normalized_url, client)
     else:
         return await fetch_og_metadata(normalized_url, client)
 
@@ -401,6 +486,22 @@ async def refresh_thumbnail(
                     return thumb, datetime.now(timezone.utc)
         except Exception as e:
             logger.warning("TikTok thumbnail refresh failed for %s: %s", source_url, str(e))
+        return None, None
+    elif "youtube.com" in source_url.lower():
+        try:
+            response = await client.get(
+                "https://www.youtube.com/oembed",
+                params={"url": source_url, "format": "json"},
+                headers=DEFAULT_HEADERS,
+                timeout=REQUEST_TIMEOUT,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                thumb = data.get("thumbnail_url")
+                if thumb:
+                    return thumb, datetime.now(timezone.utc)
+        except Exception as e:
+            logger.warning("YouTube thumbnail refresh failed for %s: %s", source_url, str(e))
         return None, None
     else:
         try:

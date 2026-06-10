@@ -342,124 +342,149 @@ async def _resolve_round(room_id: str, round_no: int, supabase: SupabaseClient):
     from app.services.game_task_manager import task_manager
     import asyncio
     
-    active_players = get_active_players(room_id, supabase)
-    active_ids = {str(p["id"]) for p in active_players}
-    
-    telemetry = (
-        supabase.table("round_telemetry")
-        .select("player_id, answered, score, reel_owner_id")
-        .eq("room_id", room_id)
-        .eq("round_no", round_no)
-        .execute()
-    )
-    records = telemetry.data or []
-    
-    if records:
-        owner_id = str(records[0]["reel_owner_id"])
-        scores = {str(r["player_id"]): r["score"] for r in records}
+    try:
+        active_players = get_active_players(room_id, supabase)
+        active_ids = {str(p["id"]) for p in active_players}
         
-        # Calculate cumulative scores for all players up to this round
-        cum_telemetry = (
+        telemetry = (
             supabase.table("round_telemetry")
-            .select("player_id, score")
+            .select("player_id, answered, score, reel_owner_id")
             .eq("room_id", room_id)
-            .lte("round_no", round_no)
+            .eq("round_no", round_no)
             .execute()
         )
-        cum_records = cum_telemetry.data or []
-        from collections import defaultdict
-        cumulative_scores = defaultdict(int)
-        for r in cum_records:
-            pid = str(r["player_id"])
-            cumulative_scores[pid] += r["score"]
-            
-        # Build sorted leaderboard list
-        leaderboard_data = []
-        for p in active_players:
-            pid = str(p["id"])
-            leaderboard_data.append({
-                "player_id": pid,
-                "name": p["display_name"],
-                "score": cumulative_scores[pid]
-            })
-        leaderboard_data.sort(key=lambda x: x["score"], reverse=True)
+        records = telemetry.data or []
         
-        # Broadcast round_result
-        await manager.broadcast_to_room(room_id, {
-            "event": "round_result",
-            "round_no": round_no,
-            "owner_id": owner_id,
-            "scores": scores,
-            "leaderboard": leaderboard_data
-        })
-        
-    # Check if it was the last round
-    room = supabase.table("rooms").select("round_count").eq("id", room_id).maybe_single().execute()
-    round_count = room.data.get("round_count", 0) if room and room.data else 0
-    
-    if round_no >= round_count:
-        # Game over
-        supabase.table("rooms").update({"status": RoomStatus.FINISHED.value}).eq("id", room_id).execute()
-        task_manager.cancel_room_tasks(room_id)
-        # 4-second delay so clients can show final round break standings
-        await asyncio.sleep(4)
-        await manager.broadcast_to_room(room_id, {
-            "event": "game_end"
-        })
-    else:
-        # Advance to next round
-        next_round = round_no + 1
-        next_telemetry = (
-            supabase.table("round_telemetry")
-            .select("reel_id")
-            .eq("room_id", room_id)
-            .eq("round_no", next_round)
-            .limit(1)
-            .execute()
-        )
-        
-        if next_telemetry.data:
-            next_reel_id = next_telemetry.data[0]["reel_id"]
-            # Look up source_url for the next reel
-            next_reel_urls = get_reel_source_urls([next_reel_id], supabase)
-            next_reel_url = next_reel_urls.get(next_reel_id, "")
+        if records:
+            owner_id = str(records[0]["reel_owner_id"])
+            scores = {str(r["player_id"]): r["score"] for r in records}
             
-            # Update game_state
-            supabase.table("game_state").update({
-                "current_round": next_round,
-                "current_reel_id": next_reel_id,
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            }).eq("room_id", room_id).execute()
-            
-            # 4-second delay to let clients show results
-            await asyncio.sleep(4)
-            
-            # Schedule next round
-            now = datetime.now(timezone.utc)
-            ends_at = (now + timedelta(milliseconds=settings.round_duration_ms)).isoformat()
-            player_options = [{"id": str(p["id"]), "name": p["display_name"]} for p in active_players]
-            
-            await manager.broadcast_to_room(room_id, {
-                "event": "round_start",
-                "round_no": next_round,
-                "reel_id": next_reel_id,
-                "reel_url": next_reel_url,
-                "options": player_options,
-                "round_duration_ms": settings.round_duration_ms,
-                "round_ends_at": ends_at
-            })
-            
-            # Schedule the new round timer
-            async def round_timer(r_no: int, sbase: SupabaseClient):
-                await asyncio.sleep(settings.round_duration_ms / 1000.0)
-                sbase.table("round_telemetry").update({
-                    "answered": True,
-                    "is_correct": False,
-                    "score": 0
-                }).eq("room_id", room_id).eq("round_no", r_no).eq("answered", False).execute()
-                await _resolve_round(room_id, r_no, sbase)
+            # Calculate cumulative scores for all players up to this round
+            cum_telemetry = (
+                supabase.table("round_telemetry")
+                .select("player_id, score")
+                .eq("room_id", room_id)
+                .lte("round_no", round_no)
+                .execute()
+            )
+            cum_records = cum_telemetry.data or []
+            from collections import defaultdict
+            cumulative_scores = defaultdict(int)
+            for r in cum_records:
+                pid = str(r["player_id"])
+                cumulative_scores[pid] += r["score"]
                 
-            task_manager.spawn(room_id, round_timer(next_round, supabase), f"timer_{next_round}")
+            # Build sorted leaderboard list using ALL players (including disconnected)
+            all_players = get_all_players(room_id, supabase)
+            leaderboard_data = []
+            for p in all_players:
+                pid = str(p["id"])
+                leaderboard_data.append({
+                    "player_id": pid,
+                    "name": p["display_name"],
+                    "score": cumulative_scores[pid]
+                })
+            leaderboard_data.sort(key=lambda x: x["score"], reverse=True)
+            
+            # Broadcast round_result
+            await manager.broadcast_to_room(room_id, {
+                "event": "round_result",
+                "round_no": round_no,
+                "owner_id": owner_id,
+                "scores": scores,
+                "leaderboard": leaderboard_data
+            })
+            
+        # Check if it was the last round
+        room = supabase.table("rooms").select("round_count").eq("id", room_id).maybe_single().execute()
+        round_count = room.data.get("round_count", 0) if room and room.data else 0
+        
+        if round_no >= round_count:
+            # Game over
+            supabase.table("rooms").update({"status": RoomStatus.FINISHED.value}).eq("id", room_id).execute()
+            # 4-second delay so clients can show final round break standings
+            await asyncio.sleep(4)
+            await manager.broadcast_to_room(room_id, {
+                "event": "game_end"
+            })
+            task_manager.cancel_room_tasks(room_id)
+        else:
+            # Advance to next round
+            next_round = round_no + 1
+            next_telemetry = (
+                supabase.table("round_telemetry")
+                .select("reel_id")
+                .eq("room_id", room_id)
+                .eq("round_no", next_round)
+                .limit(1)
+                .execute()
+            )
+            
+            if next_telemetry.data:
+                next_reel_id = next_telemetry.data[0]["reel_id"]
+                # Look up source_url for the next reel
+                next_reel_urls = get_reel_source_urls([next_reel_id], supabase)
+                next_reel_url = next_reel_urls.get(next_reel_id, "")
+                
+                # Update game_state
+                supabase.table("game_state").update({
+                    "current_round": next_round,
+                    "current_reel_id": next_reel_id,
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }).eq("room_id", room_id).execute()
+                
+                # 4-second delay to let clients show results
+                await asyncio.sleep(4)
+                
+                # Build player options using ALL players (including disconnected)
+                all_players = get_all_players(room_id, supabase)
+                player_options = [{"id": str(p["id"]), "name": p["display_name"]} for p in all_players]
+                
+                # Schedule next round
+                now = datetime.now(timezone.utc)
+                ends_at = (now + timedelta(milliseconds=settings.round_duration_ms)).isoformat()
+                
+                await manager.broadcast_to_room(room_id, {
+                    "event": "round_start",
+                    "round_no": next_round,
+                    "reel_id": next_reel_id,
+                    "reel_url": next_reel_url,
+                    "options": player_options,
+                    "round_duration_ms": settings.round_duration_ms,
+                    "round_ends_at": ends_at
+                })
+                
+                # Schedule the new round timer
+                async def round_timer(r_no: int, sbase: SupabaseClient):
+                    import asyncio
+                    await asyncio.sleep(settings.round_duration_ms / 1000.0)
+                    sbase.table("round_telemetry").update({
+                        "answered": True,
+                        "is_correct": False,
+                        "score": 0
+                    }).eq("room_id", room_id).eq("round_no", r_no).eq("answered", False).execute()
+                    await _resolve_round(room_id, r_no, sbase)
+                    
+                task_manager.spawn(room_id, round_timer(next_round, supabase), f"timer_{next_round}")
+            else:
+                # Safety fallback: if next round telemetry doesn't exist, end the game!
+                logger.warning("No telemetry for next round %s in room %s. Ending game early.", next_round, room_id)
+                supabase.table("rooms").update({"status": RoomStatus.FINISHED.value}).eq("id", room_id).execute()
+                await manager.broadcast_to_room(room_id, {
+                    "event": "game_end"
+                })
+                task_manager.cancel_room_tasks(room_id)
+    except Exception as e:
+        logger.error("Error in _resolve_round for room %s round %s: %s", room_id, round_no, e, exc_info=True)
+        # Force game over to prevent players from getting stuck in a hanging game
+        try:
+            supabase.table("rooms").update({"status": RoomStatus.FINISHED.value}).eq("id", room_id).execute()
+            await manager.broadcast_to_room(room_id, {
+                "event": "game_end"
+            })
+            task_manager.cancel_room_tasks(room_id)
+        except Exception:
+            pass
 
 
 async def get_match_report(

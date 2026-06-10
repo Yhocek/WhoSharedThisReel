@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -12,9 +12,50 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
 import api, { extractErrorMessage } from '../lib/api';
 import { saveSession } from '../lib/session';
 import { useToast } from '../components/Toast';
+
+// Set notification handler
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
+
+async function registerForPushNotificationsAsync() {
+  if (Platform.OS === 'web') return null;
+
+  const { status: existingStatus } = await Notifications.getPermissionsAsync();
+  let finalStatus = existingStatus;
+
+  if (existingStatus !== 'granted') {
+    const { status } = await Notifications.requestPermissionsAsync();
+    finalStatus = status;
+  }
+
+  if (finalStatus !== 'granted') {
+    console.log('[Push] Permission not granted');
+    return null;
+  }
+
+  try {
+    const projectId = Constants.expoConfig?.extra?.eas?.projectId || '25ee2efb-278b-4350-b410-543eb470184a';
+    const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+    console.log('[Push] Token:', token);
+    return token;
+  } catch (e) {
+    console.error('[Push] Failed to get token:', e);
+    return null;
+  }
+}
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -22,6 +63,57 @@ export default function HomeScreen() {
   const [displayName, setDisplayName] = useState('');
   const [roomCode, setRoomCode] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const setupApp = async () => {
+      try {
+        let devId = await AsyncStorage.getItem('device_id');
+        if (!devId) {
+          devId = 'dev_' + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+          await AsyncStorage.setItem('device_id', devId);
+        }
+        console.log('[App Setup] Device ID:', devId);
+
+        const token = await registerForPushNotificationsAsync();
+        if (token) {
+          await AsyncStorage.setItem('push_token', token);
+        }
+      } catch (err) {
+        console.warn('App setup failed:', err);
+      }
+    };
+
+    setupApp();
+  }, []);
+
+  useEffect(() => {
+    // Listen for notification responses (clicks)
+    const subscription = Notifications.addNotificationResponseReceivedListener(response => {
+      const data = response.notification.request.content.data;
+      if (data && data.roomId) {
+        router.push(`/room/${data.roomId}`);
+      }
+    });
+
+    return () => subscription.remove();
+  }, [router]);
+
+  const handleRegisterPushOnBackend = async (name: string) => {
+    try {
+      const devId = await AsyncStorage.getItem('device_id');
+      const token = await AsyncStorage.getItem('push_token');
+      if (devId && token) {
+        await api.post('/rooms/players/register-push', {
+          device_id: devId,
+          push_token: token,
+          display_name: name
+        });
+        console.log('[Push] Registered on backend for player', name);
+      }
+    } catch (err) {
+      console.warn('Failed to register push token with backend:', err);
+    }
+  };
 
   const handleCreateRoom = useCallback(async () => {
     const name = displayName.trim();
@@ -39,6 +131,8 @@ export default function HomeScreen() {
 
       const { room_id, room_code, player_id, session_token } = res.data;
       await saveSession(session_token, room_id, player_id);
+
+      await handleRegisterPushOnBackend(name);
 
       router.push(`/room/${room_id}`);
     } catch (error: any) {
@@ -70,6 +164,8 @@ export default function HomeScreen() {
 
       const { room_id, player_id, session_token } = res.data;
       await saveSession(session_token, room_id, player_id);
+
+      await handleRegisterPushOnBackend(name);
 
       router.push(`/room/${room_id}`);
     } catch (error: any) {

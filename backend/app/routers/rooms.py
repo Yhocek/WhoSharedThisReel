@@ -359,6 +359,179 @@ async def heartbeat_endpoint(
     )
 
 
+from pydantic import BaseModel
+import httpx
+import base64
+import re
+from datetime import datetime, timezone
+from app.schemas.reel import encode_compatible_url
+
+
+class InvitePlayerRequest(BaseModel):
+    target_device_id: str
+    room_code: str
+    host_name: str
+
+
+class RegisterPushRequest(BaseModel):
+    device_id: str
+    push_token: str
+    display_name: str
+
+
+async def send_expo_push_notification(push_token: str, title: str, body: str, data: dict = None):
+    url = "https://exp.host/--/api/v2/push/send"
+    payload = {
+        "to": push_token,
+        "sound": "default",
+        "title": title,
+        "body": body,
+    }
+    if data:
+        payload["data"] = data
+
+    async with httpx.AsyncClient() as client:
+        try:
+            res = await client.post(url, json=payload, timeout=5.0)
+            logger.info("Push notification response status: %s", res.status_code)
+            return res.status_code == 200
+        except Exception as e:
+            logger.exception("Failed to send Expo push notification: %s", e)
+            return False
+
+
+@router.post(
+    "/players/register-push",
+    summary="Register player push token",
+    description="Save the player's Expo push token under their persistent device ID in the reels database (bypassing DDL changes).",
+)
+async def register_push_endpoint(
+    request: RegisterPushRequest,
+    supabase: SupabaseClient = Depends(get_supabase),
+) -> dict:
+    """Register player push token."""
+    compat_url = encode_compatible_url("https://push-token/" + request.device_id, "PushToken")
+
+    # Check if a token for this device already exists
+    existing = (
+        supabase.table("reels")
+        .select("id")
+        .eq("source_url", compat_url)
+        .eq("provider", "PushToken")
+        .maybe_single()
+        .execute()
+    )
+
+    payload = {
+        "source_url": compat_url,
+        "creator_handle": request.display_name,
+        "creator_url": request.push_token,
+        "provider": "PushToken",
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }
+
+    if existing and existing.data:
+        res = supabase.table("reels").update(payload).eq("id", existing.data["id"]).execute()
+    else:
+        payload["created_at"] = datetime.now(timezone.utc).isoformat()
+        res = supabase.table("reels").insert(payload).execute()
+
+    if not res.data:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to register push token."
+        )
+
+    return {"success": True}
+
+
+@router.post(
+    "/{room_id}/invite",
+    summary="Invite player to room",
+    description="Send a push notification to invite a player by their device ID.",
+)
+async def invite_player_endpoint(
+    room_id: str,
+    request: InvitePlayerRequest,
+    supabase: SupabaseClient = Depends(get_supabase),
+) -> dict:
+    """Invite a player to the room."""
+    compat_url = encode_compatible_url("https://push-token/" + request.target_device_id, "PushToken")
+
+    reel_res = (
+        supabase.table("reels")
+        .select("creator_url, creator_handle")
+        .eq("source_url", compat_url)
+        .eq("provider", "PushToken")
+        .maybe_single()
+        .execute()
+    )
+
+    if not reel_res or not reel_res.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Player push token not found."
+        )
+
+    push_token = reel_res.data.get("creator_url")
+    if not push_token or not push_token.startswith("ExponentPushToken"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid push token associated with device."
+        )
+
+    success = await send_expo_push_notification(
+        push_token=push_token,
+        title="Who Shared This?",
+        body=f"{request.host_name} invited you to play! Code: {request.room_code}",
+        data={"roomId": room_id, "roomCode": request.room_code}
+    )
+
+    return {"success": success}
+
+
+@router.delete(
+    "/{room_id}/players/{target_player_id}",
+    summary="Kick player from room (Host only)",
+    description="Allow the host to remove a player from the lobby and disconnect their WebSocket connection.",
+)
+async def kick_player_endpoint(
+    room_id: str,
+    target_player_id: str,
+    player: dict = Depends(get_current_player),
+    supabase: SupabaseClient = Depends(get_supabase),
+) -> dict:
+    """Kick a player from the room."""
+    if player["room_id"] != room_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not in this room.",
+        )
+    if not player.get("is_host"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the host can kick players.",
+        )
+    if player["sub"] == target_player_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot kick yourself.",
+        )
+
+    # Delete the player from room_players
+    supabase.table("room_players").delete().eq("room_id", room_id).eq("id", target_player_id).execute()
+
+    # Close their WebSocket connection
+    await manager.kick_player(room_id, target_player_id)
+
+    # Broadcast update to the room
+    await manager.broadcast_to_room(room_id, {
+        "event": "pool_updated"
+    })
+
+    return {"status": "kicked"}
+
+
 @router.websocket("/{room_id}/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
@@ -376,9 +549,8 @@ async def websocket_endpoint(
         return
 
     player_id = payload["sub"]
-    await manager.connect(websocket, room_id, player_id)
 
-    # Fetch player's display name
+    # Fetch player's display name and verify active registration
     player_row = (
         supabase.table("room_players")
         .select("display_name")
@@ -386,11 +558,13 @@ async def websocket_endpoint(
         .maybe_single()
         .execute()
     )
-    display_name = (
-        player_row.data.get("display_name", "???")
-        if player_row and player_row.data
-        else "???"
-    )
+    if not player_row or not player_row.data:
+        await websocket.close(code=4001, reason="Kicked/Not in room")
+        return
+
+    display_name = player_row.data.get("display_name", "???")
+
+    await manager.connect(websocket, room_id, player_id)
 
     try:
         while True:
@@ -406,6 +580,14 @@ async def websocket_endpoint(
                             "player_id": player_id,
                             "display_name": display_name,
                             "text": text.strip()
+                        })
+                elif msg.get("type") == "device_id":
+                    device_id = str(msg.get("device_id") or "")
+                    if device_id:
+                        await manager.broadcast_to_room(room_id, {
+                            "event": "device_id",
+                            "player_id": player_id,
+                            "device_id": device_id
                         })
             except Exception:
                 pass

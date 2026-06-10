@@ -30,7 +30,7 @@ type RoundData = {
   round_ends_at: string;
 };
 
-/** Extract embed URL from a reel or TikTok source URL. */
+/** Extract embed URL from a reel, TikTok, or YouTube Shorts source URL. */
 function getEmbedUrl(sourceUrl?: string): string | null {
   if (!sourceUrl) return null;
 
@@ -49,6 +49,21 @@ function getEmbedUrl(sourceUrl?: string): string | null {
     const videoIdMatch = sourceUrl.match(/video\/(\d+)/);
     if (videoIdMatch) {
       return `https://www.tiktok.com/embed/v2/${videoIdMatch[1]}`;
+    }
+  }
+
+  // YouTube Shorts
+  if (urlLower.includes('youtube.com/shorts/') || urlLower.includes('youtu.be/')) {
+    let videoId = null;
+    if (urlLower.includes('youtube.com/shorts/')) {
+      const match = sourceUrl.match(/shorts\/([A-Za-z0-9_-]+)/);
+      if (match) videoId = match[1];
+    } else {
+      const match = sourceUrl.match(/youtu\.be\/([A-Za-z0-9_-]+)/);
+      if (match) videoId = match[1];
+    }
+    if (videoId) {
+      return `https://www.youtube.com/embed/${videoId}`;
     }
   }
 
@@ -193,6 +208,12 @@ export default function GameScreen() {
       setBreakLeaderboard(data.leaderboard || []);
       setPhase('result');
 
+      // Update total score from server-authoritative leaderboard
+      const myEntry = (data.leaderboard || []).find((p: any) => p.player_id === myPlayerId);
+      if (myEntry) {
+        setTotalScore(myEntry.score);
+      }
+
       // Animate score pop-in
       scorePopAnim.setValue(0);
       Animated.spring(scorePopAnim, {
@@ -223,7 +244,7 @@ export default function GameScreen() {
       wsManager.removeEvent('game_end');
       wsManager.removeEvent('ws_close');
     };
-  }, [roomId, router, startCountdown, scorePopAnim]);
+  }, [roomId, router, startCountdown, scorePopAnim, myPlayerId]);
 
   const handleAnswer = useCallback(async (playerId: string) => {
     if (answered || !round || phase !== 'playing') return;
@@ -247,9 +268,6 @@ export default function GameScreen() {
       const correct = res.data.is_correct ?? false;
       setLastRoundScore(score);
       setWasLastCorrect(correct);
-      if (correct) {
-        setTotalScore((s) => s + score);
-      }
     } catch (error: any) {
       console.error('Answer error:', error.response?.data?.detail);
       setLastRoundScore(0);
@@ -308,6 +326,19 @@ export default function GameScreen() {
           <Text style={styles.resultOwnerAnnouncement}>
             Shared by: <Text style={styles.ownerHighlight}>{correctPlayer?.name ?? 'Unknown'}</Text>
           </Text>
+
+          {/* Delayed guess feedback banner shown at the last second */}
+          <View style={[
+            styles.feedbackBanner,
+            wasLastCorrect ? styles.feedbackBannerCorrect : styles.feedbackBannerIncorrect
+          ]}>
+            <Text style={wasLastCorrect ? styles.feedbackTextCorrect : styles.feedbackTextIncorrect}>
+              {wasLastCorrect ? 'Correct! 🎉' : 'Incorrect ❌'}
+            </Text>
+            <Text style={styles.feedbackSubText}>
+              You earned +{lastRoundScore} points
+            </Text>
+          </View>
 
           <Animated.View
             style={[
@@ -390,61 +421,63 @@ export default function GameScreen() {
       {/* Reel Display */}
       <View style={styles.reelContainer}>
         <Text style={styles.reelQuestion}>
-          Who shared this {round.reel_url?.toLowerCase().includes('tiktok.com') ? 'TikTok' : 'Reel'}?
+          Who shared this {round.reel_url?.toLowerCase().includes('tiktok.com') ? 'TikTok' : round.reel_url?.toLowerCase().includes('youtube.com') ? 'YouTube Short' : 'Reel'}?
         </Text>
-        {Platform.OS === 'web' && getEmbedUrl(round.reel_url) ? (
-          <View style={styles.embedWrapper}>
-            <iframe
-              src={getEmbedUrl(round.reel_url)!}
-              style={{
-                width: '100%',
-                height: '100%',
-                border: 'none',
-                borderRadius: 12,
-                background: '#111',
-              }}
-              scrolling="no"
-              allowTransparency
-              allow="encrypted-media"
-            />
-          </View>
-        ) : (
-          <View style={styles.reelFallback}>
-            <Text style={styles.reelEmoji}>🎬</Text>
-            <Text style={styles.reelId}>
-              {round.reel_url?.toLowerCase().includes('tiktok.com') ? 'TikTok' : 'Reel'}: {round.reel_id.slice(0, 8)}...
-            </Text>
-          </View>
-        )}
-      </View>
-
-      {/* Player Options */}
-      <View style={styles.optionsContainer}>
-        {round.options.map((player) => {
-          const isChosen = chosenId === player.id;
-          return (
-            <TouchableOpacity
-              key={player.id}
-              style={[
-                styles.optionButton,
-                isChosen && styles.optionChosen,
-                answered && !isChosen && styles.optionDisabled,
-              ]}
-              onPress={() => handleAnswer(player.id)}
-              disabled={answered}
-              activeOpacity={0.7}
-            >
-              <Text
-                style={[
-                  styles.optionText,
-                  isChosen && styles.optionTextChosen,
-                ]}
-              >
-                {player.name}
+        <View style={styles.videoWrapper}>
+          {Platform.OS === 'web' && getEmbedUrl(round.reel_url) ? (
+            <View style={styles.embedWrapper}>
+              <iframe
+                src={getEmbedUrl(round.reel_url)!}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  border: 'none',
+                  borderRadius: 12,
+                  background: '#111',
+                }}
+                scrolling="no"
+                allowTransparency
+                allow="encrypted-media"
+              />
+            </View>
+          ) : (
+            <View style={styles.reelFallback}>
+              <Text style={styles.reelEmoji}>🎬</Text>
+              <Text style={styles.reelId}>
+                {round.reel_url?.toLowerCase().includes('tiktok.com') ? 'TikTok' : round.reel_url?.toLowerCase().includes('youtube.com') ? 'YouTube' : 'Reel'}: {round.reel_id.slice(0, 8)}...
               </Text>
-            </TouchableOpacity>
-          );
-        })}
+            </View>
+          )}
+
+          {/* Player Options Overlayed on the Video Container */}
+          <View style={styles.optionsContainer}>
+            {round.options.map((player) => {
+              const isChosen = chosenId === player.id;
+              return (
+                <TouchableOpacity
+                  key={player.id}
+                  style={[
+                    styles.optionButton,
+                    isChosen && styles.optionChosen,
+                    answered && !isChosen && styles.optionDisabled,
+                  ]}
+                  onPress={() => handleAnswer(player.id)}
+                  disabled={answered}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[
+                      styles.optionText,
+                      isChosen && styles.optionTextChosen,
+                    ]}
+                  >
+                    {player.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
       </View>
 
       {/* Score */}
@@ -507,17 +540,23 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   embedWrapper: {
+    width: '100%',
+    height: '100%',
+  },
+  videoWrapper: {
     width: Math.min(SCREEN_WIDTH - 32, 400),
     height: 480,
     borderRadius: 12,
     overflow: 'hidden',
     backgroundColor: '#111',
     marginTop: 8,
+    position: 'relative',
   },
   reelFallback: {
+    width: '100%',
+    height: '100%',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
   },
   reelEmoji: {
     fontSize: 64,
@@ -535,32 +574,41 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   optionsContainer: {
-    paddingHorizontal: 24,
-    gap: 10,
+    position: 'absolute',
+    bottom: 16,
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'center',
   },
   optionButton: {
-    height: 56,
-    backgroundColor: '#16161F',
-    borderRadius: 14,
+    width: '47%',
+    height: 38,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#2A2A3A',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 3,
   },
   optionChosen: {
-    borderColor: '#405DE6',
-    backgroundColor: '#1A1A30',
+    backgroundColor: '#7C3AED',
   },
   optionDisabled: {
-    opacity: 0.4,
+    opacity: 0.5,
   },
   optionText: {
-    color: '#fff',
-    fontSize: 16,
+    color: '#000000',
+    fontSize: 13,
     fontWeight: '700',
   },
   optionTextChosen: {
-    color: '#405DE6',
+    color: '#FFFFFF',
   },
   footer: {
     padding: 24,
@@ -662,6 +710,38 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 24,
     fontStyle: 'italic',
+  },
+  feedbackBanner: {
+    padding: 16,
+    borderRadius: 16,
+    alignItems: 'center',
+    width: SCREEN_WIDTH - 48,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#2A2A3A',
+  },
+  feedbackBannerCorrect: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    borderColor: '#10B981',
+  },
+  feedbackBannerIncorrect: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    borderColor: '#EF4444',
+  },
+  feedbackTextCorrect: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#10B981',
+  },
+  feedbackTextIncorrect: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#EF4444',
+  },
+  feedbackSubText: {
+    color: '#888',
+    fontSize: 13,
+    marginTop: 4,
   },
   // Disconnected
   disconnectEmoji: {

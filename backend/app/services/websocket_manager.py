@@ -46,6 +46,27 @@ class ConnectionManager:
         except Exception as e:
             logger.error("Failed to cleanly remove player %s on disconnect: %s", player_id, e)
 
+    async def kick_player(self, room_id: str, player_id: str):
+        """Find the websocket for player_id in room_id and close it (code 4001)."""
+        if room_id not in self.active_connections:
+            return
+        to_close = []
+        for connection in self.active_connections[room_id]:
+            ws, pid = connection
+            if pid == player_id:
+                to_close.append(connection)
+                
+        for connection in to_close:
+            ws, pid = connection
+            try:
+                await ws.close(code=4001, reason="Kicked by host")
+            except Exception:
+                pass
+            if room_id in self.active_connections and connection in self.active_connections[room_id]:
+                self.active_connections[room_id].remove(connection)
+        if room_id in self.active_connections and not self.active_connections[room_id]:
+            del self.active_connections[room_id]
+
     async def broadcast_to_room(self, room_id: str, message: Dict[str, Any]):
         """Push a JSON message to all connected clients in a room."""
         if room_id not in self.active_connections:

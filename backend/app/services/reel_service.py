@@ -45,6 +45,9 @@ logger = logging.getLogger(__name__)
 
 def _row_to_reel_response(row: dict) -> ReelResponse:
     """Convert a Supabase row dict to a ReelResponse schema."""
+    from app.schemas.reel import decode_compatible_url
+    raw_source_url = decode_compatible_url(row["source_url"])
+
     # Compute thumbnail freshness
     thumbnail_fresh = False
     if row.get("thumbnail_url") and row.get("thumbnail_fetched_at"):
@@ -56,7 +59,7 @@ def _row_to_reel_response(row: dict) -> ReelResponse:
 
     return ReelResponse(
         id=row["id"],
-        source_url=row["source_url"],
+        source_url=raw_source_url,
         creator_handle=row.get("creator_handle"),
         creator_url=row.get("creator_url"),
         provider=row.get("provider", "Instagram"),
@@ -103,7 +106,7 @@ async def ingest_reel(
     is_valid, normalized_url, shortcode, provider = validate_media_url(request.source_url)
     if not is_valid or shortcode is None:
         raise ValueError(
-            "Invalid video URL. Expected a public Instagram Reel or TikTok URL."
+            "Invalid video URL. Expected a public Instagram Reel, TikTok, or YouTube Short URL."
         )
 
     # ── Step 2: Fetch metadata (moved up to resolve canonical URLs) ──
@@ -126,13 +129,17 @@ async def ingest_reel(
     # Use resolved canonical source URL for deduplication and persistence
     resolved_source_url = metadata.source_url or normalized_url
 
+    # Wrap for DB check constraint!
+    from app.schemas.reel import encode_compatible_url
+    db_source_url = encode_compatible_url(resolved_source_url, provider)
+
     # ── Step 4: Deduplication check ───────────────────────────
     # Registered users: dedup by (source_url, ingested_by)
     # Anonymous users: dedup by (source_url, ingested_by_player_id)
     query = (
         supabase.table("reels")
         .select("*")
-        .eq("source_url", resolved_source_url)
+        .eq("source_url", db_source_url)
     )
     if user_id:
         query = query.eq("ingested_by", str(user_id))
@@ -145,7 +152,7 @@ async def ingest_reel(
 
     if existing and existing.data:
         logger.info(
-            "Duplicate Reel detected: %s for user %s", resolved_source_url, user_id
+            "Duplicate Reel detected: %s for user %s", db_source_url, user_id
         )
         return ReelIngestionResult(
             reel=_row_to_reel_response(existing.data),
@@ -167,7 +174,7 @@ async def ingest_reel(
 
     # ── Step 6: Persist to Supabase ───────────────────────────
     insert_payload = {
-        "source_url": resolved_source_url,
+        "source_url": db_source_url,
         "creator_handle": metadata.creator_handle,
         "creator_url": metadata.creator_url,
         "provider": metadata.provider,

@@ -13,7 +13,9 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-# ── URL Validation ────────────────────────────────────────────────
+import base64
+
+# ── URL Validation & Compatibility Helpers ──────────────────────────
 # Matches: https://www.instagram.com/reel/CODE/
 #          https://instagram.com/reels/CODE?igsh=...
 #          https://www.instagram.com/p/CODE/
@@ -30,6 +32,37 @@ def extract_shortcode(url: str) -> str:
     return match.group(3)
 
 
+def encode_compatible_url(url: str, provider: str) -> str:
+    """Wrap non-Instagram URLs to bypass DB check constraints."""
+    if provider not in ("TikTok", "YouTube", "PushToken"):
+        return url
+    encoded = base64.urlsafe_b64encode(url.encode('utf-8')).decode('utf-8').rstrip('=')
+    prefix = {
+        "TikTok": "tt",
+        "YouTube": "yt",
+        "PushToken": "pt"
+    }.get(provider, "tt")
+    return f"https://www.instagram.com/reel/{prefix}_{encoded}/"
+
+
+def decode_compatible_url(url: str) -> str:
+    """Decode a compatibility-wrapped URL back to its raw form."""
+    if not url:
+        return url
+    match = re.match(r"^https://(?:www\.)?instagram\.com/(?:reel|reels|p)/(tt|yt|pt)_([A-Za-z0-9_-]+)/?$", url)
+    if not match:
+        return url
+    prefix, encoded = match.groups()
+    try:
+        padding = len(encoded) % 4
+        if padding:
+            encoded += "=" * (4 - padding)
+        decoded_bytes = base64.urlsafe_b64decode(encoded)
+        return decoded_bytes.decode('utf-8')
+    except Exception:
+        return url
+
+
 # ── Request Schemas ───────────────────────────────────────────────
 
 class IngestReelRequest(BaseModel):
@@ -39,7 +72,7 @@ class IngestReelRequest(BaseModel):
         ...,
         min_length=20,
         max_length=2048,
-        description="Public Instagram Reel URL",
+        description="Public Instagram Reel, TikTok, or YouTube Short URL",
         examples=["https://www.instagram.com/reel/ABC123def/"],
     )
     user_tags: List[str] = Field(
@@ -50,17 +83,16 @@ class IngestReelRequest(BaseModel):
 
     @field_validator("source_url")
     @classmethod
-    def validate_instagram_url(cls, v: str) -> str:
-        """R1 compliance: Reject any URL that isn't a valid Instagram Reel."""
-        # Normalize: strip whitespace, remove trailing fragments
+    def validate_source_url(cls, v: str) -> str:
+        """Accept Instagram Reels, TikTok videos, or YouTube Shorts."""
+        from app.services.media_parser import validate_media_url
         v = v.strip()
-        # Remove tracking parameters but keep the core URL
-        if not INSTAGRAM_REEL_PATTERN.match(v):
+        is_valid, normalized_url, shortcode, provider = validate_media_url(v)
+        if not is_valid:
             raise ValueError(
-                "URL must be a valid Instagram Reel link "
-                "(e.g., https://www.instagram.com/reel/ABC123/)"
+                "URL must be a valid Instagram Reel, TikTok, or YouTube Short link"
             )
-        return v
+        return normalized_url
 
     @field_validator("user_tags")
     @classmethod

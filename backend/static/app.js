@@ -18,6 +18,8 @@ const state = {
   timerMsLeft: 0,
   totalTimerMs: 15000, // standard round duration
   currentRoundNo: null,
+  myChosenId: null,
+  userSelectedRoundsManually: false,
 };
 
 // -----------------------------------------------------------------------------
@@ -330,6 +332,26 @@ async function fetchRoom() {
     
     renderLobbyPlayers(res.players, me);
     renderPoolStatus(res.players, res.vault_counts || {});
+
+    // Calculate standard rounds count dynamically:
+    const totalReels = Object.values(res.vault_counts || {}).reduce((a, b) => a + b, 0);
+    const activePlayers = res.players.filter(p => p.is_connected);
+    const playerCount = activePlayers.length;
+    const defaultRounds = playerCount > 0 ? Math.floor(totalReels / playerCount) + (playerCount * 2) : 20;
+
+    if (!state.userSelectedRoundsManually) {
+      state.selectedRounds = defaultRounds;
+    }
+
+    // Highlight selected round button
+    document.querySelectorAll('.btn-round').forEach(btn => {
+      if (parseInt(btn.dataset.rounds, 10) === state.selectedRounds) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    });
+
     updateHostControls(me);
     
   } catch (err) {
@@ -410,6 +432,7 @@ function updateHostControls(me) {
 
 function setRoundCount(rounds) {
   state.selectedRounds = rounds;
+  state.userSelectedRoundsManually = true;
   document.querySelectorAll('.btn-round').forEach(btn => {
     if (parseInt(btn.dataset.rounds, 10) === rounds) {
       btn.classList.add('active');
@@ -611,8 +634,7 @@ async function addFromVaultToRoom(url) {
       showToast('This video is already in the room vault!', 'info');
     } else {
       showToast('Video added to room vault!', 'success');
-      // Clean from vault on successful addition
-      removeFromLocalVault(url);
+      // Keep in vault so it stays there
     }
   } catch (err) {
     showToast(extractErrorMessage(err.response?.data?.detail) || 'Failed to add video.', 'error');
@@ -821,11 +843,27 @@ function getEmbedUrl(sourceUrl) {
       return `https://www.tiktok.com/embed/v2/${match[1]}`;
     }
   }
+
+  // YouTube Shorts
+  if (urlLower.includes('youtube.com/shorts/') || urlLower.includes('youtu.be/')) {
+    let videoId = null;
+    if (urlLower.includes('youtube.com/shorts/')) {
+      const match = sourceUrl.match(/shorts\/([A-Za-z0-9_-]+)/);
+      if (match) videoId = match[1];
+    } else {
+      const match = sourceUrl.match(/youtu\.be\/([A-Za-z0-9_-]+)/);
+      if (match) videoId = match[1];
+    }
+    if (videoId) {
+      return `https://www.youtube.com/embed/${videoId}`;
+    }
+  }
   return null;
 }
 
 function renderRound(data) {
   state.answered = false;
+  state.myChosenId = null;
   state.currentRoundNo = data.round_no;
   
   // Reconstruct game sidebar layout to wipe out the result standings leaderboard
@@ -922,6 +960,7 @@ function renderGuessButtons(options, roundNo) {
 async function submitGuess(playerId) {
   if (state.answered) return;
   state.answered = true;
+  state.myChosenId = playerId;
   
   // Disable all buttons and show active selection
   document.querySelectorAll('.guess-btn').forEach(btn => {
@@ -942,19 +981,18 @@ async function submitGuess(playerId) {
       })
     });
     
-    // Result confirmation display
+    // Result confirmation display - hide correctness feedback until round break
     const statusBox = document.getElementById('guess-status-box');
-    const isCorrect = res.is_correct;
-    
-    statusBox.className = `guess-status-box ${isCorrect ? 'correct' : 'incorrect'}`;
+    statusBox.className = 'guess-status-box correct';
     statusBox.innerHTML = `
-      <div class="guess-status-title">${isCorrect ? 'Correct Answer! 🎉' : 'Incorrect Guess ❌'}</div>
-      <div class="guess-status-desc">${isCorrect ? `Nice job! You earned ${res.score} points.` : 'Stay tuned for round results!'}</div>
+      <div class="guess-status-title">Guess Submitted!</div>
+      <div class="guess-status-desc">Waiting for the round to end...</div>
     `;
     statusBox.classList.remove('hidden');
   } catch (err) {
     showToast('Failed to submit answer.', 'error');
     state.answered = false;
+    state.myChosenId = null;
     document.querySelectorAll('.guess-btn').forEach(btn => btn.disabled = false);
   }
 }
@@ -970,6 +1008,21 @@ function renderRoundResult(data) {
 
   const owner = data.leaderboard ? data.leaderboard.find(p => p.player_id === data.owner_id) : null;
   const ownerName = owner ? owner.name : 'Unknown';
+  
+  // Calculate local user's feedback dynamically at the last second
+  const isCorrect = state.myChosenId === data.owner_id;
+  const scoreGain = data.scores ? (data.scores[state.playerId] || 0) : 0;
+  
+  const feedbackHtml = `
+    <div class="round-feedback-banner ${isCorrect ? 'correct' : 'incorrect'}" style="margin-bottom: 16px; padding: 12px; border-radius: 12px; text-align: center; border: 1px solid var(--border-color); background: ${isCorrect ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)'};">
+      <div style="font-size: 16px; font-weight: 800; color: ${isCorrect ? 'var(--success-color)' : 'var(--danger-color)'};">
+        ${isCorrect ? 'Correct! 🎉' : 'Incorrect ❌'}
+      </div>
+      <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+        You earned <strong>+${scoreGain}</strong> points
+      </div>
+    </div>
+  `;
   
   const leaderboardHtml = (data.leaderboard || []).map((player, idx) => {
     let rankEmoji = '';
@@ -994,9 +1047,12 @@ function renderRoundResult(data) {
   
   sidebar.innerHTML = `
     <h3 style="margin-bottom: 8px;">Round Results</h3>
-    <div class="round-owner-announcement" style="margin-bottom: 20px; font-size: 15px; color: var(--text-secondary);">
-      Shared by: <strong style="color: var(--primary-color);">${escapeHtml(ownerName)}</strong>
+    <div class="round-owner-announcement" style="margin-bottom: 12px; font-size: 15px; color: var(--text-secondary);">
+      Shared by: <strong style="color: var(--primary-accent);">${escapeHtml(ownerName)}</strong>
     </div>
+    
+    ${feedbackHtml}
+    
     <div class="leaderboard-break-list">
       ${leaderboardHtml}
     </div>
