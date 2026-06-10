@@ -108,16 +108,23 @@ export default function GameScreen() {
 
 
   // Start countdown when round data arrives and "renders"
-  const startCountdown = useCallback((durationMs: number) => {
-    // Record when the reel actually rendered (not when WS arrived)
+  const startCountdown = useCallback((durationMs: number, endsAtStr?: string) => {
+    const endsAt = endsAtStr ? new Date(endsAtStr).getTime() : null;
+    const now = Date.now();
+    
+    let initialTimeLeft = durationMs;
+    if (endsAt && endsAt > now) {
+      initialTimeLeft = Math.max(0, endsAt - now);
+    }
+    
     roundStartTimeRef.current = Date.now();
-    setTimeLeft(durationMs);
+    setTimeLeft(initialTimeLeft);
 
     // Reset animation
-    countdownAnim.setValue(1);
+    countdownAnim.setValue(initialTimeLeft / durationMs);
     Animated.timing(countdownAnim, {
       toValue: 0,
-      duration: durationMs,
+      duration: initialTimeLeft,
       useNativeDriver: false,
     }).start();
 
@@ -125,7 +132,7 @@ export default function GameScreen() {
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = setInterval(() => {
       const elapsed = Date.now() - roundStartTimeRef.current;
-      const remaining = Math.max(0, durationMs - elapsed);
+      const remaining = Math.max(0, initialTimeLeft - elapsed);
       setTimeLeft(remaining);
 
       if (remaining <= 0) {
@@ -148,7 +155,7 @@ export default function GameScreen() {
       setPhase('playing');
       
       requestAnimationFrame(() => {
-        startCountdown(data.round_duration_ms);
+        startCountdown(data.round_duration_ms, data.round_ends_at);
       });
     }
 
@@ -163,7 +170,7 @@ export default function GameScreen() {
 
       // Start countdown when the reel renders (this callback fires after render commit)
       requestAnimationFrame(() => {
-        startCountdown(data.round_duration_ms);
+        startCountdown(data.round_duration_ms, data.round_ends_at);
       });
     });
 

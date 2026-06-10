@@ -791,8 +791,15 @@ function renderRound(data) {
   state.answered = false;
   
   // Progress Bar reset
-  state.totalTimerMs = 15000;
-  state.timerMsLeft = state.totalTimerMs;
+  const endsAt = data.round_ends_at ? new Date(data.round_ends_at).getTime() : null;
+  const now = Date.now();
+  state.totalTimerMs = data.round_duration_ms || 10000;
+  
+  if (endsAt && endsAt > now) {
+    state.timerMsLeft = Math.max(0, endsAt - now);
+  } else {
+    state.timerMsLeft = state.totalTimerMs;
+  }
   updateTimerProgress();
   
   // Set headers
@@ -820,14 +827,15 @@ function renderRound(data) {
   }
   
   // Reset guess buttons list
-  renderGuessButtons(data.players, data.round_no);
+  renderGuessButtons(data.options, data.round_no);
   
   // Start countdown timer
   if (state.timerInterval) clearInterval(state.timerInterval);
   const startTick = Date.now();
+  const initialMsLeft = state.timerMsLeft;
   state.timerInterval = setInterval(() => {
     const elapsed = Date.now() - startTick;
-    state.timerMsLeft = Math.max(0, state.totalTimerMs - elapsed);
+    state.timerMsLeft = Math.max(0, initialMsLeft - elapsed);
     
     document.getElementById('game-timer').textContent = `${Math.ceil(state.timerMsLeft / 1000)}s`;
     updateTimerProgress();
@@ -843,19 +851,21 @@ function updateTimerProgress() {
   document.getElementById('game-progress-bar').style.width = `${percent}%`;
 }
 
-function renderGuessButtons(players, roundNo) {
+function renderGuessButtons(options, roundNo) {
   const container = document.getElementById('guess-buttons');
   document.getElementById('guess-status-box').classList.add('hidden');
   
-  // Render guess option button for each active player
-  const activePlayers = players.filter(p => p.is_connected);
+  if (!options) {
+    container.innerHTML = '';
+    return;
+  }
   
-  container.innerHTML = activePlayers.map((player, idx) => {
+  container.innerHTML = options.map((player, idx) => {
     const letter = String.fromCharCode(65 + idx); // A, B, C, ...
     return `
       <button class="guess-btn" data-player-id="${player.id}" onclick="submitGuess('${player.id}')">
         <span class="guess-btn-letter">${letter}</span>
-        ${escapeHtml(player.display_name)}
+        ${escapeHtml(player.name)}
       </button>
     `;
   }).join('');
