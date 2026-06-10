@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhoSharedThisVideo? - HTML Client</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div id="app-container">
+    <!-- Toast Notification Container -->
+    <div id="toast-container"></div>
+
+    <!-- 1. WELCOME SCREEN -->
+    <div id="welcome-view" class="view active">
+      <div class="header-logo">
+        <span class="logo-icon">🎬</span>
+        <h1>WhoShared<span>ThisReel?</span></h1>
+        <p class="subtitle">HTML Crossplay Client</p>
+      </div>
+
+      <div class="card glass">
+        <div class="form-group">
+          <label for="nickname-input">Nickname / Display Name</label>
+          <input type="text" id="nickname-input" placeholder="Enter your name..." autocomplete="off">
+        </div>
+
+        <div class="divider"><span>OR</span></div>
+
+        <div class="form-group">
+          <label for="room-code-input">Room Code (To Join)</label>
+          <input type="text" id="room-code-input" placeholder="6-letter code (e.g. ABCDEF)" maxlength="6" autocomplete="off">
+        </div>
+
+        <div class="btn-group">
+          <button id="create-room-btn" class="btn btn-secondary">Create Room</button>
+          <button id="join-room-btn" class="btn btn-primary">Join Room</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. LOBBY SCREEN -->
+    <div id="lobby-view" class="view">
+      <div class="lobby-header card glass">
+        <div>
+          <span class="label">ROOM CODE</span>
+          <h2 id="room-code-display" class="clickable-code">------</h2>
+          <span class="tap-hint">click code to copy</span>
+        </div>
+        <button id="leave-lobby-btn" class="btn btn-danger btn-sm">Leave</button>
+      </div>
+
+      <!-- Main Lobby Grid -->
+      <div class="lobby-grid">
+        <!-- Left Column: Players & Pool Status -->
+        <div class="lobby-left">
+          <!-- Players List -->
+          <div class="card glass">
+            <h3>Players (<span id="player-count">0/8</span>)</h3>
+            <div id="player-list" class="list-container">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+
+          <!-- Pool Status Card -->
+          <div class="card glass">
+            <h3>Pool Status (<span id="requirement-count">Min - reels</span>)</h3>
+            <div class="pool-summary">
+              <p>Total Reels in Pool: <strong id="pool-total">0</strong></p>
+              <div id="pool-player-list" class="pool-player-list">
+                <!-- Rendered dynamically -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: Add Videos, Chat & Host Settings -->
+        <div class="lobby-right">
+          <!-- Add Reel Section -->
+          <div class="card glass">
+            <h3>Add Videos</h3>
+            <div class="input-row">
+              <input type="text" id="reel-url-input" placeholder="Instagram Reel or TikTok URL...">
+              <button id="add-reel-btn" class="btn btn-primary btn-icon">+</button>
+            </div>
+            <button id="open-vault-btn" class="btn btn-vault">📂 Kasadan Seç (Choose from Vault)</button>
+            <div id="added-reels-list" class="added-reels-list">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+
+          <!-- Chat Section -->
+          <div class="card glass chat-card">
+            <h3>Lobby Chat</h3>
+            <div id="chat-messages" class="chat-messages">
+              <div class="empty-chat">No messages yet. Say hello!</div>
+            </div>
+            <div class="chat-input-row">
+              <input type="text" id="chat-input" placeholder="Type a message (max 50 chars)..." maxlength="50">
+              <button id="send-chat-btn" class="btn btn-primary btn-sm">Send</button>
+            </div>
+            <div class="chat-char-counter"><span id="chat-char-count">0</span>/50</div>
+          </div>
+
+          <!-- Host Settings -->
+          <div id="host-settings-card" class="card glass host-only-settings hidden">
+            <h3>Host Controls</h3>
+            <div class="form-group">
+              <label>Round Count</label>
+              <div class="round-options">
+                <button class="btn btn-round" data-rounds="10">10 (min 5)</button>
+                <button class="btn btn-round active" data-rounds="20">20 (min 10)</button>
+                <button class="btn btn-round" data-rounds="30">30 (min 15)</button>
+                <button class="btn btn-round" data-rounds="50">50 (min 25)</button>
+                <button class="btn btn-round" data-rounds="100">100 (min 50)</button>
+              </div>
+            </div>
+            <div id="start-error-msg" class="error-msg hidden"></div>
+            <button id="start-game-btn" class="btn btn-success btn-block">Start Game</button>
+          </div>
+
+          <!-- Non-Host Waiting Card -->
+          <div id="player-waiting-card" class="card glass waiting-settings">
+            <h3>Game Info</h3>
+            <p id="waiting-game-info">Waiting for host to start the game...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. GAME SCREEN -->
+    <div id="game-view" class="view">
+      <div class="game-header card glass">
+        <div class="header-left">
+          <span class="label">ROUND</span>
+          <h2 id="game-round-title">Round 1 / 10</h2>
+        </div>
+        <div class="header-right">
+          <span class="label">TIME LEFT</span>
+          <h2 id="game-timer">--s</h2>
+        </div>
+      </div>
+
+      <!-- Timer Progress Bar -->
+      <div class="progress-container">
+        <div id="game-progress-bar" class="progress-bar"></div>
+      </div>
+
+      <div class="game-grid">
+        <!-- Video Embed -->
+        <div class="game-main card glass">
+          <div class="video-container">
+            <iframe id="reel-embed-frame" src="" frameborder="0" allowfullscreen></iframe>
+            <div id="no-embed-fallback" class="fallback-container hidden">
+              <span class="fallback-icon">🎬</span>
+              <p>Unable to embed this link directly in the browser.</p>
+              <a id="fallback-link" href="#" target="_blank" class="btn btn-primary">Open Video in New Tab</a>
+            </div>
+          </div>
+          <div class="media-details">
+            <span class="media-tag" id="media-type-badge">REEL</span>
+            <span class="media-url-text" id="media-short-text">Loading video URL...</span>
+          </div>
+        </div>
+
+        <!-- Guess Panel -->
+        <div class="game-sidebar card glass">
+          <h3>Who shared this video?</h3>
+          <div id="guess-buttons" class="guess-buttons-grid">
+            <!-- Rendered dynamically -->
+          </div>
+          
+          <!-- Answer Status Box -->
+          <div id="guess-status-box" class="guess-status-box hidden">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. LEADERBOARD SCREEN -->
+    <div id="leaderboard-view" class="view">
+      <div class="header-logo">
+        <span class="logo-icon">🏆</span>
+        <h1>Final Leaderboard</h1>
+        <p class="subtitle">Match Results</p>
+      </div>
+
+      <div class="card glass">
+        <table class="leaderboard-table">
+          <thead>
+            <tr>
+              <th style="width: 80px;">Rank</th>
+              <th>Player</th>
+              <th class="text-right">Score</th>
+              <th class="text-right">Correct Guess</th>
+              <th class="text-right">Avg Reaction</th>
+            </tr>
+          </thead>
+          <tbody id="leaderboard-body">
+            <!-- Rendered dynamically -->
+          </tbody>
+        </table>
+
+        <div class="btn-group" style="margin-top: 30px;">
+          <button id="leaderboard-leave-btn" class="btn btn-secondary btn-block">Leave Room</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5. CHOOSE FROM VAULT MODAL -->
+    <div id="vault-modal" class="modal-overlay hidden">
+      <div class="modal-content glass">
+        <div class="modal-header">
+          <h2>Kasadan Seç (Choose from Vault)</h2>
+          <button id="close-vault-modal" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="vault-modal-list" class="vault-modal-list">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

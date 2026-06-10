@@ -6,12 +6,13 @@ Pydantic models for room creation, joining, and lobby management.
 
 from __future__ import annotations
 
-from typing import Optional, List
+from typing import Optional, List, Dict
 from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 
 class CreateRoomRequest(BaseModel):
+
     """Create a new game room."""
     display_name: str = Field(
         ..., min_length=2, max_length=30,
@@ -79,6 +80,8 @@ class RoomResponse(BaseModel):
     created_at: Optional[str] = None
     expires_at: Optional[str] = None
     players: List[PlayerResponse] = Field(default_factory=list)
+    vault_counts: Dict[str, int] = Field(default_factory=dict)
+
 
 
 class RoomCreatedResponse(BaseModel):

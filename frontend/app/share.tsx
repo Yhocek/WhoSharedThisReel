@@ -13,12 +13,13 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
-import api from '../lib/api';
+import api, { extractErrorMessage } from '../lib/api';
 import { getSession } from '../lib/session';
 import { useToast } from '../components/Toast';
 import {
   getClipboard,
   addToClipboard,
+  addMultipleToClipboard,
   removeFromClipboard,
   clearClipboard,
   ClipboardItem,
@@ -41,7 +42,7 @@ export default function ShareScreen() {
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.95)).current;
 
-  // Extract an Instagram or TikTok URL from text
+  // Extract a single Instagram or TikTok URL from text
   const extractMediaUrl = useCallback((text: string): string | null => {
     // Match Instagram Reel/Post
     const instaMatch = text.match(
@@ -56,6 +57,40 @@ export default function ShareScreen() {
     if (tiktokMatch) return tiktokMatch[0];
 
     return null;
+  }, []);
+
+  // Extract ALL Instagram and TikTok URLs from text (for batch pasting)
+  const extractMediaUrls = useCallback((text: string): string[] => {
+    const urls: string[] = [];
+    const seen = new Set<string>();
+
+    // Match all Instagram Reel/Post URLs
+    const instaMatches = text.matchAll(
+      /https?:\/\/(?:www\.)?instagram\.com\/(?:reel|reels|p)\/[A-Za-z0-9_-]+\/?[^\s,;]*/gi
+    );
+    for (const m of instaMatches) {
+      const url = m[0].replace(/[,;]+$/, ''); // strip trailing comma/semicolons
+      const key = url.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        urls.push(url);
+      }
+    }
+
+    // Match all TikTok URLs
+    const tiktokMatches = text.matchAll(
+      /https?:\/\/(?:[a-zA-Z0-9-]+\.)?tiktok\.com\/[A-Za-z0-9_.\/@-]+/gi
+    );
+    for (const m of tiktokMatches) {
+      const url = m[0].replace(/[,;]+$/, '');
+      const key = url.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        urls.push(url);
+      }
+    }
+
+    return urls;
   }, []);
 
   const loadClipboard = useCallback(async () => {
@@ -121,9 +156,33 @@ export default function ShareScreen() {
       return;
     }
 
-    const extracted = extractMediaUrl(trimmed);
-    const urlToAdd = extracted || trimmed;
+    // Try batch extraction first (multiple URLs)
+    const extracted = extractMediaUrls(trimmed);
 
+    if (extracted.length > 1) {
+      // Batch mode: multiple URLs found
+      const { items, addedCount } = await addMultipleToClipboard(extracted);
+      setClipboardItems(items);
+      setUrlInput('');
+      if (addedCount === 0) {
+        toast.info('All links were already in the Inbox.');
+      } else {
+        toast.success(`Added ${addedCount} link(s) to Inbox!`);
+      }
+      return;
+    }
+
+    if (extracted.length === 1) {
+      // Single valid media URL
+      const updated = await addToClipboard(extracted[0]);
+      setClipboardItems(updated);
+      setUrlInput('');
+      toast.success('Added to Inbox!');
+      return;
+    }
+
+    // No regex match — fall back to raw URL if it looks like one
+    const urlToAdd = trimmed;
     if (!urlToAdd.startsWith('http://') && !urlToAdd.startsWith('https://')) {
       toast.error('Please enter a valid URL starting with http:// or https://');
       return;
@@ -139,16 +198,24 @@ export default function ShareScreen() {
     try {
       const text = await Clipboard.getStringAsync();
       if (text) {
-        const extracted = extractMediaUrl(text);
-        setUrlInput(extracted || text.trim());
-        toast.info('Pasted from device clipboard');
+        // Check for multiple URLs in clipboard
+        const extracted = extractMediaUrls(text);
+        if (extracted.length > 1) {
+          // Paste all found URLs directly into the input for preview
+          setUrlInput(extracted.join('\n'));
+          toast.info(`Found ${extracted.length} links — press Add to import all`);
+        } else {
+          const single = extractMediaUrl(text);
+          setUrlInput(single || text.trim());
+          toast.info('Pasted from device clipboard');
+        }
       } else {
         toast.info('Device clipboard is empty');
       }
     } catch {
       toast.error('Could not read device clipboard');
     }
-  }, [extractMediaUrl, toast]);
+  }, [extractMediaUrl, extractMediaUrls, toast]);
 
   const handleRemoveItem = async (url: string) => {
     const updated = await removeFromClipboard(url);
@@ -184,8 +251,8 @@ export default function ShareScreen() {
       const updated = await removeFromClipboard(url);
       setClipboardItems(updated);
     } catch (error: any) {
-      const detail = error.response?.data?.detail || 'Failed to add video';
-      toast.error(detail);
+      const errorMsg = extractErrorMessage(error.response?.data?.detail) || 'Failed to add video';
+      toast.error(errorMsg);
     } finally {
       setSubmittingItem(null);
     }
@@ -307,16 +374,21 @@ export default function ShareScreen() {
 
           {/* Input Card */}
           <View style={styles.card}>
-            <Text style={styles.inputLabel}>ADD LINK MANUALLY</Text>
+            <Text style={styles.inputLabel}>ADD LINKS</Text>
+            <Text style={styles.inputHint}>
+              Paste one or multiple links (comma, newline, or space separated)
+            </Text>
             <View style={styles.inputRow}>
               <TextInput
-                style={styles.input}
-                placeholder="Paste Instagram Reel or TikTok link..."
+                style={[styles.input, urlInput.includes('\n') && styles.inputMultiline]}
+                placeholder="Paste Instagram Reel or TikTok links..."
                 placeholderTextColor="#666"
                 value={urlInput}
                 onChangeText={setUrlInput}
                 autoCapitalize="none"
                 autoCorrect={false}
+                multiline
+                numberOfLines={urlInput.includes('\n') ? 4 : 1}
               />
               <TouchableOpacity
                 style={styles.pasteButton}
@@ -558,10 +630,22 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    height: 48,
+    minHeight: 48,
     paddingHorizontal: 14,
+    paddingVertical: 12,
     fontSize: 13,
     color: '#fff',
+  },
+  inputMultiline: {
+    height: 'auto',
+    maxHeight: 120,
+    textAlignVertical: 'top',
+  },
+  inputHint: {
+    color: '#666',
+    fontSize: 11,
+    marginBottom: 8,
+    lineHeight: 16,
   },
   pasteButton: {
     width: 44,

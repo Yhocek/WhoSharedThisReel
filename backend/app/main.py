@@ -12,11 +12,13 @@ Configures:
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -111,6 +113,13 @@ app.include_router(health.router)
 app.include_router(rooms.router)
 app.include_router(reels.router)
 app.include_router(game.router)
+
+# ── Serve Web Client ──────────────────────────────────────────────
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+@app.get("/")
+async def serve_home():
+    return FileResponse(os.path.join("static", "index.html"))
 
 
 # ── Static Info Pages (App Store Requirements) ───────────────────

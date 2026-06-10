@@ -43,7 +43,10 @@ class LeaderboardEntry(BaseModel):
     player_id: UUID
     display_name: str
     total_score: int
+    correct_count: int
+    avg_reaction_ms: float
     avatar_url: Optional[str] = None
+
 
 
 class MatchReportResponse(BaseModel):

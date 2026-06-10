@@ -245,10 +245,24 @@ async def get_room_details(
         .execute()
     )
 
+    vault_result = (
+        supabase.table("vault_reels")
+        .select("player_id")
+        .eq("room_id", room_id)
+        .execute()
+    )
+
+    vault_counts = {}
+    for row in (vault_result.data or []):
+        pid = str(row["player_id"])
+        vault_counts[pid] = vault_counts.get(pid, 0) + 1
+
     return {
         "room": room_result.data if room_result else None,
         "players": players_result.data or [],
+        "vault_counts": vault_counts,
     }
+
 
 
 async def add_reel_to_vault(

@@ -8,11 +8,12 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   ScrollView,
+  Modal,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import api from '../../../lib/api';
+import api, { extractErrorMessage } from '../../../lib/api';
 import { getSession, clearSession } from '../../../lib/session';
 import wsManager from '../../../lib/websocket';
 import { useToast } from '../../../components/Toast';
@@ -36,6 +37,7 @@ type RoomData = {
   max_players: number;
   round_count: number;
   players: Player[];
+  vault_counts?: Record<string, number>;
 };
 
 type AddedReel = {
@@ -58,6 +60,13 @@ export default function LobbyScreen() {
   const [myPlayerId, setMyPlayerId] = useState('');
   const [startError, setStartError] = useState('');
   const [clipboardItems, setClipboardItems] = useState<ClipboardItem[]>([]);
+  const [chatMessages, setChatMessages] = useState<
+    { id: string; player_id: string; display_name: string; text: string }[]
+  >([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isVaultVisible, setIsVaultVisible] = useState(false);
+
+
   
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const inputRef = useRef<TextInput>(null);
@@ -72,12 +81,16 @@ export default function LobbyScreen() {
     try {
       const res = await api.get(`/rooms/${roomId}`);
       setRoom(res.data);
+      if (res.data?.status === 'playing') {
+        if (pollRef.current) clearInterval(pollRef.current);
+        router.push(`/room/${roomId}/game`);
+      }
     } catch (error: any) {
       console.error('Failed to fetch room:', error);
     } finally {
       setLoading(false);
     }
-  }, [roomId]);
+  }, [roomId, router]);
 
   useEffect(() => {
     // Get session to know if we're host
@@ -97,7 +110,14 @@ export default function LobbyScreen() {
       fetchRoom();
       loadLocalClipboard();
       api.post(`/rooms/${roomId}/heartbeat`).catch(() => {});
+
+      if (wsManager.state === 'disconnected' || wsManager.state === 'idle') {
+        wsManager.connect(roomId).catch((err) => {
+          console.log('[WS] Auto-reconnect failed:', err);
+        });
+      }
     }, 3000);
+
 
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
@@ -111,22 +131,39 @@ export default function LobbyScreen() {
     }
   }, [room, myPlayerId]);
 
-  // Connect WebSocket and listen for round_start (game starting)
+  // Connect WebSocket and listen for events
   useEffect(() => {
     if (!roomId) return;
 
-    wsManager.connect(roomId);
+    if (wsManager.state !== 'connected' && wsManager.state !== 'connecting') {
+      wsManager.connect(roomId).catch((err) => {
+        console.error('[WS] Lobby connect error:', err);
+      });
+    }
 
     wsManager.onEvent('round_start', () => {
-      // Stop polling, navigate to game
       if (pollRef.current) clearInterval(pollRef.current);
       router.push(`/room/${roomId}/game`);
     });
 
+    wsManager.onEvent('chat', (data: any) => {
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: data.id || `${Date.now()}-${Math.random()}`,
+          player_id: data.player_id,
+          display_name: data.display_name,
+          text: data.text,
+        },
+      ]);
+    });
+
     return () => {
       wsManager.removeEvent('round_start');
+      wsManager.removeEvent('chat');
     };
   }, [roomId, router]);
+
 
   const handlePaste = useCallback(async () => {
     try {
@@ -150,39 +187,64 @@ export default function LobbyScreen() {
       return;
     }
 
+    const urls = trimmed.split(/[\n,\s;]+/).map(u => u.trim()).filter(Boolean);
+    if (urls.length === 0) {
+      toast.info('Paste a video URL first.');
+      return;
+    }
+
     setSubmitting(true);
-    try {
-      const res = await api.post(`/rooms/${roomId}/reels`, {
-        source_url: trimmed,
-      });
+    let addedCount = 0;
+    let duplicateCount = 0;
+    let failCount = 0;
 
-      if (res.data?.status === 'already_added') {
-        toast.info('This video is already in the pool.');
-      } else {
-        setAddedReels((prev) => [
-          ...prev,
-          { reel_id: res.data.reel_id, source_url: trimmed },
-        ]);
-        toast.success('Video added to pool!');
+    for (const singleUrl of urls) {
+      try {
+        const res = await api.post(`/rooms/${roomId}/reels`, {
+          source_url: singleUrl,
+        });
+
+        if (res.data?.status === 'already_added') {
+          duplicateCount++;
+        } else {
+          setAddedReels((prev) => [
+            ...prev,
+            { reel_id: res.data.reel_id, source_url: singleUrl },
+          ]);
+          addedCount++;
+        }
+
+        if (removeFromClipboardOnSuccess) {
+          await removeFromClipboard(singleUrl);
+        }
+      } catch (error: any) {
+        failCount++;
+        console.error(`Failed to add ${singleUrl}:`, error);
       }
+    }
 
-      if (removeFromClipboardOnSuccess) {
-        await removeFromClipboard(trimmed);
-        await loadLocalClipboard();
-      }
+    if (removeFromClipboardOnSuccess) {
+      await loadLocalClipboard();
+    }
+    setReelUrl('');
+    fetchRoom();
+    setSubmitting(false);
 
-      setReelUrl('');
-      fetchRoom();
-    } catch (error: any) {
-      toast.error(error.response?.data?.detail || 'Failed to add video');
-    } finally {
-      setSubmitting(false);
+    if (addedCount > 0) {
+      toast.success(`Successfully added ${addedCount} video(s)!`);
+    }
+    if (duplicateCount > 0) {
+      toast.info(`${duplicateCount} video(s) were already in the pool.`);
+    }
+    if (failCount > 0) {
+      toast.error(`Failed to add ${failCount} video(s).`);
     }
   }, [roomId, fetchRoom, toast, loadLocalClipboard]);
 
   const handleAddReel = useCallback(async () => {
     await addVideoToRoom(reelUrl);
   }, [reelUrl, addVideoToRoom]);
+
 
   const handleAddAllFromClipboard = useCallback(async () => {
     setSubmitting(true);
@@ -227,7 +289,7 @@ export default function LobbyScreen() {
         toast.success('Video removed');
         fetchRoom();
       } catch (error: any) {
-        toast.error(error.response?.data?.detail || 'Failed to remove Reel');
+        toast.error(extractErrorMessage(error.response?.data?.detail) || 'Failed to remove Reel');
       } finally {
         setDeletingReelId(null);
       }
@@ -243,9 +305,9 @@ export default function LobbyScreen() {
       });
       // round_start event from WebSocket will navigate us
     } catch (error: any) {
-      const detail = error.response?.data?.detail || 'Failed to start game';
-      setStartError(detail);
-      toast.error(detail);
+      const errorMsg = extractErrorMessage(error.response?.data?.detail) || 'Failed to start game';
+      setStartError(errorMsg);
+      toast.error(errorMsg);
     }
   }, [roomId, selectedRounds, toast]);
 
@@ -268,6 +330,21 @@ export default function LobbyScreen() {
     }
   }, [room, toast]);
 
+  const handleSendChat = useCallback(() => {
+    const text = chatInput.trim();
+    if (!text) return;
+    try {
+      wsManager.send({
+        type: 'chat',
+        text: text,
+      });
+      setChatInput('');
+    } catch (err) {
+      toast.error('Failed to send message');
+    }
+  }, [chatInput, toast]);
+
+
   if (loading) {
     return (
       <View style={styles.center}>
@@ -285,6 +362,10 @@ export default function LobbyScreen() {
   }
 
   const connectedPlayers = room.players.filter((p) => p.is_connected);
+  const minRequired = Math.ceil(selectedRounds / 2);
+  const canStartGame = connectedPlayers.every(
+    (p) => (room.vault_counts?.[p.id] ?? 0) >= minRequired
+  );
 
   // Extract a short display from a Reel or TikTok URL
   const reelShortcode = (url: string) => {
@@ -342,6 +423,32 @@ export default function LobbyScreen() {
           ))}
         </View>
 
+        {/* Pool Status Card */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Pool Status (Min {minRequired} reels/player)</Text>
+          <View style={styles.poolCard}>
+            <Text style={styles.poolTotalText}>
+              Total Reels in Pool: <Text style={styles.poolTotalValue}>{Object.values(room.vault_counts || {}).reduce((a, b) => a + b, 0)}</Text>
+            </Text>
+            <View style={styles.poolPlayerList}>
+              {connectedPlayers.map((p) => {
+                const count = room.vault_counts?.[p.id] ?? 0;
+                const met = count >= minRequired;
+                return (
+                  <View key={p.id} style={styles.poolPlayerRow}>
+                    <Text style={styles.poolPlayerName} numberOfLines={1}>{p.display_name}</Text>
+                    <View style={[styles.poolBadge, met ? styles.poolBadgeMet : styles.poolBadgeUnder]}>
+                      <Text style={[styles.poolBadgeText, met ? styles.poolBadgeTextMet : styles.poolBadgeTextUnder]}>
+                        {count} / {minRequired}
+                      </Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        </View>
+
         {/* Add Reel Section */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Add Videos ({addedReels.length} added)</Text>
@@ -378,6 +485,14 @@ export default function LobbyScreen() {
               )}
             </TouchableOpacity>
           </View>
+
+          <TouchableOpacity
+            style={styles.vaultButton}
+            onPress={() => setIsVaultVisible(true)}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.vaultButtonText}>📂 Kasadan Seç (Choose from Vault)</Text>
+          </TouchableOpacity>
 
           {/* Clipboard list */}
           {clipboardItems.length > 0 && (
@@ -452,26 +567,66 @@ export default function LobbyScreen() {
             </View>
           )}
         </View>
+
+        {/* Lobby Chat Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Lobby Chat</Text>
+          <View style={styles.chatContainer}>
+            <View style={styles.chatMessagesList}>
+              {chatMessages.length === 0 ? (
+                <Text style={styles.emptyChatText}>No messages yet. Say hello!</Text>
+              ) : (
+                chatMessages.slice(-15).map((msg) => (
+                  <View key={msg.id} style={styles.chatMessageItem}>
+                    <Text style={styles.chatSender}>{msg.display_name}: </Text>
+                    <Text style={styles.chatText}>{msg.text}</Text>
+                  </View>
+                ))
+              )}
+            </View>
+            <View style={styles.chatInputRow}>
+              <TextInput
+                style={styles.chatInput}
+                placeholder="Type a message (max 50 chars)..."
+                placeholderTextColor="#555"
+                value={chatInput}
+                onChangeText={(text) => setChatInput(text.slice(0, 50))}
+                maxLength={50}
+              />
+              <Text style={styles.chatCounter}>{chatInput.length}/50</Text>
+              <TouchableOpacity
+                style={[styles.chatSendButton, !chatInput.trim() && styles.chatSendButtonDisabled]}
+                onPress={handleSendChat}
+                disabled={!chatInput.trim()}
+              >
+                <Text style={styles.chatSendButtonText}>Send</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </ScrollView>
 
       {/* Actions (pinned to bottom) */}
       <View style={styles.actions}>
-        {isHost && (
+        {isHost ? (
           <View style={styles.hostSettings}>
             <Text style={styles.sectionTitle}>Round Count</Text>
             <View style={styles.roundOptions}>
-              {[10, 20, 30, 50, 100].map((rounds) => (
-                <TouchableOpacity
-                  key={rounds}
-                  style={[styles.roundButton, selectedRounds === rounds && styles.roundButtonActive]}
-                  onPress={() => setSelectedRounds(rounds)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[styles.roundButtonText, selectedRounds === rounds && styles.roundButtonTextActive]}>
-                    {rounds}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+              {[10, 20, 30, 50, 100].map((rounds) => {
+                const req = Math.ceil(rounds / 2);
+                return (
+                  <TouchableOpacity
+                    key={rounds}
+                    style={[styles.roundButton, selectedRounds === rounds && styles.roundButtonActive]}
+                    onPress={() => setSelectedRounds(rounds)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.roundButtonText, selectedRounds === rounds && styles.roundButtonTextActive]}>
+                      {rounds} (min {req})
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
             {!!startError && (
               <Text style={{ color: '#E1306C', fontSize: 14, marginBottom: 8 }}>
@@ -479,12 +634,22 @@ export default function LobbyScreen() {
               </Text>
             )}
             <TouchableOpacity
-              style={styles.startButton}
+              style={[styles.startButton, !canStartGame && styles.startButtonDisabled]}
               onPress={handleStartGame}
+              disabled={!canStartGame}
               activeOpacity={0.8}
             >
-              <Text style={styles.startButtonText}>Start Game</Text>
+              <Text style={styles.startButtonText}>
+                {canStartGame ? 'Start Game' : `Need ${minRequired} reels per player`}
+              </Text>
             </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.hostSettings}>
+            <Text style={styles.sectionTitle}>Game Info</Text>
+            <Text style={{ color: '#aaa', fontSize: 14, marginBottom: 8 }}>
+              Waiting for host to start the game. Selected rounds: {room.round_count} (needs {Math.ceil(room.round_count / 2)} reels/player).
+            </Text>
           </View>
         )}
 
@@ -492,9 +657,71 @@ export default function LobbyScreen() {
           <Text style={styles.leaveButtonText}>Leave Room</Text>
         </TouchableOpacity>
       </View>
+
+      <Modal
+        visible={isVaultVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setIsVaultVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Kasadan Seç (Choose from Vault)</Text>
+              <TouchableOpacity onPress={() => setIsVaultVisible(false)}>
+                <Text style={styles.modalCloseText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.modalScroll}>
+              {clipboardItems.length === 0 ? (
+                <Text style={styles.modalEmpty}>Kasanız boş. Instagram veya TikTok'tan video paylaşarak buraya ekleyebilirsiniz.</Text>
+              ) : (
+                <View style={styles.modalList}>
+                  {clipboardItems.map((item) => {
+                    const isTiktok = item.url.toLowerCase().includes('tiktok.com');
+                    return (
+                      <View key={item.url} style={styles.modalItem}>
+                        <View style={[styles.tag, { backgroundColor: isTiktok ? 'rgba(0, 242, 254, 0.15)' : 'rgba(225, 48, 108, 0.15)' }]}>
+                          <Text style={[styles.tagText, { color: isTiktok ? '#00f2fe' : '#E1306C' }]}>
+                            {isTiktok ? 'TikTok' : 'Insta'}
+                          </Text>
+                        </View>
+                        <Text style={styles.clipboardText} numberOfLines={1}>
+                          {reelShortcode(item.url)}
+                        </Text>
+                        <View style={styles.clipboardActions}>
+                          <TouchableOpacity
+                            style={styles.modalAddBtn}
+                            onPress={async () => {
+                              await addVideoToRoom(item.url, true);
+                            }}
+                            disabled={submitting}
+                          >
+                            <Text style={styles.clipAddText}>Ekle</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={styles.clipRemoveButton}
+                            onPress={() => handleRemoveFromClipboard(item.url)}
+                            disabled={submitting}
+                          >
+                            <Text style={styles.clipRemoveText}>✕</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
+
+
+
 
 const styles = StyleSheet.create({
   container: {
@@ -839,4 +1066,214 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '700',
   },
+  poolCard: {
+    backgroundColor: '#16161F',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#2A2A3A',
+  },
+  poolTotalText: {
+    color: '#aaa',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  poolTotalValue: {
+    color: '#fff',
+    fontWeight: '800',
+  },
+  poolPlayerList: {
+    gap: 8,
+  },
+  poolPlayerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  poolPlayerName: {
+    color: '#fff',
+    fontSize: 14,
+    flex: 1,
+    marginRight: 8,
+  },
+  poolBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    minWidth: 50,
+    alignItems: 'center',
+  },
+  poolBadgeMet: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+  },
+  poolBadgeUnder: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+  },
+  poolBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  poolBadgeTextMet: {
+    color: '#10B981',
+  },
+  poolBadgeTextUnder: {
+    color: '#EF4444',
+  },
+  startButtonDisabled: {
+    backgroundColor: '#1C1C28',
+    opacity: 0.6,
+  },
+  chatContainer: {
+    backgroundColor: '#16161F',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2A2A3A',
+    overflow: 'hidden',
+  },
+  chatMessagesList: {
+    padding: 12,
+    maxHeight: 180,
+    minHeight: 80,
+  },
+  chatMessageItem: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 6,
+  },
+  chatSender: {
+    color: '#405DE6',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  chatText: {
+    color: '#eee',
+    fontSize: 13,
+  },
+  emptyChatText: {
+    color: '#555',
+    fontSize: 13,
+    fontStyle: 'italic',
+    textAlign: 'center',
+    marginTop: 20,
+  },
+  chatInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: '#2A2A3A',
+    backgroundColor: '#0E0E16',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  chatInput: {
+    flex: 1,
+    height: 38,
+    color: '#fff',
+    fontSize: 13,
+    paddingRight: 40,
+  },
+  chatCounter: {
+    color: '#555',
+    fontSize: 11,
+    position: 'absolute',
+    right: 70,
+  },
+  chatSendButton: {
+    backgroundColor: '#405DE6',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  chatSendButtonDisabled: {
+    backgroundColor: '#1C1C28',
+    opacity: 0.5,
+  },
+  chatSendButtonText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  vaultButton: {
+    marginTop: 10,
+    backgroundColor: '#7C3AED',
+    borderRadius: 12,
+    height: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  vaultButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: '#16161F',
+    borderRadius: 20,
+    width: '100%',
+    maxWidth: 500,
+    maxHeight: '80%',
+    borderWidth: 1,
+    borderColor: '#2A2A3A',
+    overflow: 'hidden',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2A2A3A',
+  },
+  modalTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  modalCloseText: {
+    color: '#eee',
+    fontSize: 18,
+    fontWeight: '700',
+    padding: 4,
+  },
+  modalScroll: {
+    padding: 16,
+  },
+  modalEmpty: {
+    color: '#888',
+    textAlign: 'center',
+    paddingVertical: 32,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  modalList: {
+    gap: 10,
+    paddingBottom: 20,
+  },
+  modalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0E0E16',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#2A2A3A',
+    marginBottom: 8,
+  },
+  modalAddBtn: {
+    backgroundColor: '#10B981',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
 });
+

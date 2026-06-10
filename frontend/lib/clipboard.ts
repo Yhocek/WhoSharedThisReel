@@ -34,6 +34,41 @@ export async function addToClipboard(url: string): Promise<ClipboardItem[]> {
   }
 }
 
+/**
+ * Add multiple URLs to clipboard in one batch write.
+ * Returns the count of newly added (non-duplicate) URLs.
+ */
+export async function addMultipleToClipboard(
+  urls: string[]
+): Promise<{ items: ClipboardItem[]; addedCount: number }> {
+  try {
+    const current = await getClipboard();
+    const existingSet = new Set(current.map(item => item.url.toLowerCase()));
+    const newItems: ClipboardItem[] = [];
+    const now = Date.now();
+
+    for (const url of urls) {
+      const normalized = url.trim();
+      const key = normalized.toLowerCase();
+      if (!existingSet.has(key)) {
+        existingSet.add(key);
+        newItems.push({ url: normalized, addedAt: now });
+      }
+    }
+
+    if (newItems.length === 0) {
+      return { items: current, addedCount: 0 };
+    }
+
+    const updated = [...newItems, ...current];
+    await AsyncStorage.setItem(CLIPBOARD_STORAGE_KEY, JSON.stringify(updated));
+    return { items: updated, addedCount: newItems.length };
+  } catch (error) {
+    console.error('Failed to add multiple to clipboard:', error);
+    return { items: [], addedCount: 0 };
+  }
+}
+
 export async function removeFromClipboard(url: string): Promise<ClipboardItem[]> {
   try {
     const current = await getClipboard();

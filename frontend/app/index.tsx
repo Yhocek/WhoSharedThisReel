@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import api from '../lib/api';
+import api, { extractErrorMessage } from '../lib/api';
 import { saveSession } from '../lib/session';
 import { useToast } from '../components/Toast';
 
@@ -42,7 +42,7 @@ export default function HomeScreen() {
 
       router.push(`/room/${room_id}`);
     } catch (error: any) {
-      toast.error(error.response?.data?.detail || 'Failed to create room');
+      toast.error(extractErrorMessage(error.response?.data?.detail) || 'Failed to create room');
     } finally {
       setLoading(false);
     }
@@ -73,7 +73,7 @@ export default function HomeScreen() {
 
       router.push(`/room/${room_id}`);
     } catch (error: any) {
-      toast.error(error.response?.data?.detail || 'Failed to join room');
+      toast.error(extractErrorMessage(error.response?.data?.detail) || 'Failed to join room');
     } finally {
       setLoading(false);
     }

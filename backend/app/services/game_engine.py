@@ -145,6 +145,7 @@ def generate_match_report(
     # 1. Leaderboard & Averages
     player_scores = defaultdict(int)
     player_times = defaultdict(list)
+    player_correct_counts = defaultdict(int)
 
     # 2. Longest Streak
     current_streaks = defaultdict(int)
@@ -173,6 +174,9 @@ def generate_match_report(
         # Total score
         player_scores[pid] += score
 
+        if is_correct:
+            player_correct_counts[pid] += 1
+
         # Streak tracking
         if is_correct:
             current_streaks[pid] += 1
@@ -191,13 +195,17 @@ def generate_match_report(
     leaderboard_entries = []
     for pid in participant_set:
         profile = player_profiles.get(pid, {})
+        avg_time = sum(player_times[pid]) / len(player_times[pid]) if player_times[pid] else 0.0
         leaderboard_entries.append(LeaderboardEntry(
             rank=0,  # calculated below
             player_id=UUID(pid),
             display_name=profile.get("display_name", "Unknown"),
             total_score=player_scores[pid],
+            correct_count=player_correct_counts[pid],
+            avg_reaction_ms=avg_time,
             avatar_url=profile.get("avatar_url")
         ))
+
 
     # Sort leaderboard by score desc
     leaderboard_entries.sort(key=lambda x: x.total_score, reverse=True)

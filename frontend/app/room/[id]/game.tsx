@@ -95,6 +95,18 @@ export default function GameScreen() {
     };
   }, [roomId]);
 
+  // Ensure WebSocket is connected on mount
+  useEffect(() => {
+    if (!roomId) return;
+
+    if (wsManager.state !== 'connected' && wsManager.state !== 'connecting') {
+      wsManager.connect(roomId).catch((err) => {
+        console.error('[WS] Game screen connect error:', err);
+      });
+    }
+  }, [roomId]);
+
+
   // Start countdown when round data arrives and "renders"
   const startCountdown = useCallback((durationMs: number) => {
     // Record when the reel actually rendered (not when WS arrived)

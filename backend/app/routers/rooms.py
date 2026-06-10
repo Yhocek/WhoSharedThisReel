@@ -346,10 +346,37 @@ async def websocket_endpoint(
     player_id = payload["sub"]
     await manager.connect(websocket, room_id, player_id)
 
+    # Fetch player's display name
+    player_row = (
+        supabase.table("room_players")
+        .select("display_name")
+        .eq("id", player_id)
+        .maybe_single()
+        .execute()
+    )
+    display_name = (
+        player_row.data.get("display_name", "???")
+        if player_row and player_row.data
+        else "???"
+    )
+
     try:
         while True:
-            # We don't expect messages from the client on this channel yet,
-            # but we need to read to detect disconnects.
-            await websocket.receive_text()
+            raw = await websocket.receive_text()
+            try:
+                import json
+                msg = json.loads(raw)
+                if msg.get("type") == "chat":
+                    text = str(msg.get("text") or "")[:50]
+                    if text.strip():
+                        await manager.broadcast_to_room(room_id, {
+                            "event": "chat",
+                            "player_id": player_id,
+                            "display_name": display_name,
+                            "text": text.strip()
+                        })
+            except Exception:
+                pass
     except WebSocketDisconnect:
         await manager.disconnect(websocket, room_id, player_id, supabase)
+

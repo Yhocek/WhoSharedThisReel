@@ -44,4 +44,25 @@ export async function getWsUrl(roomId: string): Promise<string> {
   return `${wsBase}/api/v1/rooms/${roomId}/ws?token=${encodeURIComponent(token)}`;
 }
 
+export function extractErrorMessage(detail: any): string {
+  if (!detail) return '';
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((err) => {
+        if (err && typeof err === 'object') {
+          const field = err.loc ? err.loc.filter((l: any) => l !== 'body').join('.') : '';
+          const msg = err.msg || 'Validation error';
+          return field ? `${field}: ${msg}` : msg;
+        }
+        return String(err);
+      })
+      .join(', ');
+  }
+  if (typeof detail === 'object') {
+    return detail.message || detail.detail || JSON.stringify(detail);
+  }
+  return String(detail);
+}
+
 export default api;
