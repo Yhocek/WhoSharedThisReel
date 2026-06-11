@@ -1188,3 +1188,74 @@ input[type="text"]:focus {
   color: var(--text-muted);
 }
 
+/* Fallback direct link button */
+.direct-link-btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border-color);
+  padding: 6px 12px;
+  border-radius: 8px;
+  color: #fff;
+  text-decoration: none;
+  font-size: 11px;
+  font-weight: 700;
+  transition: all 0.2s ease;
+}
+.direct-link-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+}
+.direct-link-btn.hidden {
+  display: none;
+}
+
+/* My Reels in Pool List */
+.my-pool-reels-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 200px;
+  overflow-y: auto;
+  margin-top: 10px;
+}
+.my-pool-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-color);
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+.my-pool-item-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.my-pool-item-remove {
+  background: none;
+  border: none;
+  color: var(--danger-color);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  transition: opacity 0.2s ease;
+}
+.my-pool-item-remove:hover {
+  opacity: 0.7;
+}
+.empty-text {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: center;
+  font-style: italic;
+  margin: 10px 0;
+}
+

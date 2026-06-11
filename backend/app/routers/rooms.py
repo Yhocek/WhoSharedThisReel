@@ -14,7 +14,7 @@ Endpoints:
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query
 from supabase import Client as SupabaseClient
@@ -34,6 +34,7 @@ from app.schemas.room import (
     RoomJoinedResponse,
     RoomResponse,
     PlayerResponse,
+    MyVaultReelResponse,
 )
 from app.schemas.reel import IngestReelRequest
 from app.services import room_service
@@ -294,6 +295,62 @@ async def leave_room_endpoint(
         supabase=supabase,
         is_explicit=True,
     )
+
+
+@router.get(
+    "/{room_id}/vault",
+    response_model=List[MyVaultReelResponse],
+    summary="Get current player's reels in room vault",
+    description="Get the list of Reels the current player has contributed to this room's pool.",
+)
+async def get_my_vault_reels(
+    room_id: str,
+    player: dict = Depends(get_current_player),
+    supabase: SupabaseClient = Depends(get_supabase),
+) -> List[MyVaultReelResponse]:
+    """Get current player's reels in room vault."""
+    if player["room_id"] != room_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not in this room.",
+        )
+
+    try:
+        # Fetch player's vault entries
+        vault_res = (
+            supabase.table("vault_reels")
+            .select("reel_id")
+            .eq("room_id", room_id)
+            .eq("player_id", player["sub"])
+            .execute()
+        )
+        reel_ids = [row["reel_id"] for row in (vault_res.data or [])]
+        if not reel_ids:
+            return []
+            
+        # Fetch actual reel details
+        reels_res = (
+            supabase.table("reels")
+            .select("id, source_url, provider")
+            .in_("id", reel_ids)
+            .execute()
+        )
+        
+        from app.schemas.reel import decode_compatible_url
+        my_reels = []
+        for row in (reels_res.data or []):
+            my_reels.append(MyVaultReelResponse(
+                id=row["id"],
+                url=decode_compatible_url(row["source_url"]),
+                provider=row.get("provider", "Instagram")
+            ))
+        return my_reels
+    except Exception as e:
+        logger.error("Failed to fetch player's vault reels: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch your reels from the pool.",
+        )
 
 
 @router.delete(
@@ -608,10 +665,13 @@ async def websocket_endpoint(
                     now = datetime.now(timezone.utc)
                     # Only catch up if the round is active and timer hasn't expired
                     if round_ends_at > now:
-                        # Fetch the reel URL
-                        from app.services.game_service import get_reel_source_urls, get_all_players
-                        reel_urls = get_reel_source_urls([current_reel_id], supabase)
-                        reel_url = reel_urls.get(str(current_reel_id), "")
+                        # Fetch the reel URL details
+                        from app.services.game_service import get_reels_details, get_all_players
+                        reels_details = get_reels_details([current_reel_id], supabase)
+                        reel_detail = reels_details.get(str(current_reel_id), {})
+                        reel_url = reel_detail.get("url", "")
+                        thumbnail_url = reel_detail.get("thumbnail_url")
+                        provider = reel_detail.get("provider", "Instagram")
                         
                         # Build options
                         all_players = get_all_players(room_id, supabase)
@@ -640,6 +700,8 @@ async def websocket_endpoint(
                             "round_no": current_round,
                             "reel_id": str(current_reel_id),
                             "reel_url": reel_url,
+                            "thumbnail_url": thumbnail_url,
+                            "provider": provider,
                             "options": player_options,
                             "round_duration_ms": settings.round_duration_ms,
                             "round_ends_at": round_ends_at_str,

@@ -99,3 +99,10 @@ class RoomJoinedResponse(BaseModel):
     room_code: str
     player_id: str
     session_token: str
+
+
+class MyVaultReelResponse(BaseModel):
+    """A reel inside the user's active room vault."""
+    id: str
+    url: str
+    provider: str

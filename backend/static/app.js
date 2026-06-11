@@ -354,6 +354,7 @@ async function fetchRoom() {
     
     renderLobbyPlayers(res.players, me);
     renderPoolStatus(res.players, res.vault_counts || {});
+    fetchMyVaultReels();
 
     // Calculate standard rounds count dynamically:
     const totalReels = Object.values(res.vault_counts || {}).reduce((a, b) => a + b, 0);
@@ -922,6 +923,27 @@ function renderRound(data) {
   const reelIdText = data.reel_id ? data.reel_id.slice(0, 8) : 'unknown';
   document.getElementById('media-short-text').textContent = `Video ID: ${reelIdText}...`;
   
+  // Set cover art thumbnail as container background to load immediately
+  const container = document.querySelector('.video-container');
+  if (container) {
+    if (data.thumbnail_url) {
+      container.style.backgroundImage = `url('${data.thumbnail_url}')`;
+      container.style.backgroundSize = 'cover';
+      container.style.backgroundPosition = 'center';
+    } else {
+      container.style.backgroundImage = 'none';
+    }
+  }
+
+  // Display the direct link action button prominently
+  const directLink = document.getElementById('direct-open-link');
+  if (directLink && data.reel_url) {
+    directLink.href = data.reel_url;
+    directLink.classList.remove('hidden');
+  } else if (directLink) {
+    directLink.classList.add('hidden');
+  }
+
   if (embedUrl) {
     frame.src = embedUrl;
     frame.classList.remove('hidden');
@@ -1256,4 +1278,80 @@ function escapeJsString(str) {
     .replace(/\\/g, '\\\\')
     .replace(/'/g, "\\'")
     .replace(/"/g, '\\"');
+}
+
+// -----------------------------------------------------------------------------
+// Lobby contributed reels pool management
+// -----------------------------------------------------------------------------
+async function fetchMyVaultReels() {
+  if (!state.roomId) return;
+  try {
+    const reels = await apiCall(`/rooms/${state.roomId}/vault`);
+    renderMyVaultReels(reels);
+  } catch (err) {
+    console.error("Failed to fetch my vault reels:", err);
+  }
+}
+
+function renderMyVaultReels(reels) {
+  const container = document.getElementById('my-pool-reels-list');
+  const countSpan = document.getElementById('my-pool-count');
+  if (!container) return;
+  
+  if (countSpan) {
+    countSpan.textContent = reels.length;
+  }
+  
+  if (reels.length === 0) {
+    container.innerHTML = `<p class="empty-text">You haven't added any reels to this room yet.</p>`;
+    return;
+  }
+  
+  container.innerHTML = reels.map(reel => {
+    let cleanLabel = '';
+    const urlLower = reel.url.toLowerCase();
+    
+    // Nice friendly display labels
+    if (urlLower.includes('instagram.com')) {
+      const match = reel.url.match(/\/(reel|reels|p)\/([A-Za-z0-9_-]+)/);
+      cleanLabel = match ? `IG: ${match[2].slice(0, 11)}` : `Instagram Link`;
+    } else if (urlLower.includes('tiktok.com')) {
+      const match = reel.url.match(/video\/(\d+)/);
+      cleanLabel = match ? `TT: ${match[1].slice(0, 11)}` : `TikTok Link`;
+    } else if (urlLower.includes('youtube.com/shorts/') || urlLower.includes('youtu.be/')) {
+      let videoId = null;
+      if (urlLower.includes('youtube.com/shorts/')) {
+        const match = reel.url.match(/shorts\/([A-Za-z0-9_-]+)/);
+        if (match) videoId = match[1];
+      } else {
+        const match = reel.url.match(/youtu\.be\/([A-Za-z0-9_-]+)/);
+        if (match) videoId = match[1];
+      }
+      cleanLabel = videoId ? `YT: ${videoId.slice(0, 11)}` : `YouTube Link`;
+    } else {
+      cleanLabel = reel.url.slice(0, 30);
+    }
+    
+    return `
+      <div class="my-pool-item">
+        <div class="my-pool-item-info">
+          <span class="vault-item-tag ${reel.provider.toLowerCase()}">${reel.provider}</span>
+          <span style="font-weight: 600; color: var(--text-secondary);">${cleanLabel}</span>
+        </div>
+        <button class="my-pool-item-remove" onclick="removeReelFromRoomPool('${reel.id}')" title="Kaldır">❌</button>
+      </div>
+    `;
+  }).join('');
+}
+
+async function removeReelFromRoomPool(reelId) {
+  if (!confirm('Bu videoyu oda havuzundan kaldırmak istediğinize emin misiniz?')) return;
+  try {
+    await apiCall(`/rooms/${state.roomId}/vault/${reelId}`, { method: 'DELETE' });
+    showToast('Video havuzdan kaldırıldı.', 'success');
+    fetchRoom(); // This will refresh counts and my reels list automatically!
+  } catch (err) {
+    const detail = err.response?.data?.detail;
+    showToast(extractErrorMessage(detail) || 'Failed to remove reel.', 'error');
+  }
 }

@@ -90,6 +90,29 @@ def get_reel_source_urls(reel_ids: List[str], supabase: SupabaseClient) -> Dict[
     return {str(row["id"]): decode_compatible_url(row["source_url"]) for row in (result.data or [])}
 
 
+def get_reels_details(reel_ids: List[str], supabase: SupabaseClient) -> Dict[str, Dict[str, Any]]:
+    """
+    Look up detailed fields (source_url, thumbnail_url, provider) for a list of reel IDs.
+    """
+    if not reel_ids:
+        return {}
+    result = (
+        supabase.table("reels")
+        .select("id, source_url, thumbnail_url, provider")
+        .in_("id", reel_ids)
+        .execute()
+    )
+    from app.schemas.reel import decode_compatible_url
+    details = {}
+    for row in (result.data or []):
+        details[str(row["id"])] = {
+            "url": decode_compatible_url(row["source_url"]),
+            "thumbnail_url": row.get("thumbnail_url"),
+            "provider": row.get("provider", "Instagram")
+        }
+    return details
+
+
 async def start_match(
     room_id: str,
     round_count: int,
@@ -164,9 +187,9 @@ async def start_match(
         reel_id = pool[owner_id].pop()
         match_reels.append({"owner_id": owner_id, "reel_id": reel_id})
 
-    # Look up source_urls for all selected reels
+    # Look up details for all selected reels
     selected_reel_ids = [mr["reel_id"] for mr in match_reels]
-    reel_urls = get_reel_source_urls(selected_reel_ids, supabase)
+    reels_details = get_reels_details(selected_reel_ids, supabase)
 
     # ── Phase 2: DB writes (all validation passed) ────────────
     now = datetime.now(timezone.utc)
@@ -225,11 +248,15 @@ async def start_match(
     except Exception as db_err:
         logger.error("Failed to update initial round_ends_at in game_state: %s", db_err)
     
+    first_reel_id = first_round["reel_id"]
+    first_detail = reels_details.get(first_reel_id, {})
     task_manager.spawn(room_id, manager.broadcast_to_room(room_id, {
         "event": "round_start",
         "round_no": 1,
-        "reel_id": first_round["reel_id"],
-        "reel_url": reel_urls.get(first_round["reel_id"], ""),
+        "reel_id": first_reel_id,
+        "reel_url": first_detail.get("url", ""),
+        "thumbnail_url": first_detail.get("thumbnail_url"),
+        "provider": first_detail.get("provider", "Instagram"),
         "options": player_options,
         "round_duration_ms": settings.round_duration_ms,
         "round_ends_at": ends_at
@@ -436,9 +463,12 @@ async def _resolve_round(room_id: str, round_no: int, supabase: SupabaseClient):
             
             if next_telemetry.data:
                 next_reel_id = next_telemetry.data[0]["reel_id"]
-                # Look up source_url for the next reel
-                next_reel_urls = get_reel_source_urls([next_reel_id], supabase)
-                next_reel_url = next_reel_urls.get(next_reel_id, "")
+                # Look up details for the next reel
+                next_reels_details = get_reels_details([next_reel_id], supabase)
+                next_detail = next_reels_details.get(next_reel_id, {})
+                next_reel_url = next_detail.get("url", "")
+                next_thumbnail_url = next_detail.get("thumbnail_url")
+                next_provider = next_detail.get("provider", "Instagram")
                 
                 # 4-second delay to let clients show results
                 await asyncio.sleep(4)
@@ -467,6 +497,8 @@ async def _resolve_round(room_id: str, round_no: int, supabase: SupabaseClient):
                     "round_no": next_round,
                     "reel_id": next_reel_id,
                     "reel_url": next_reel_url,
+                    "thumbnail_url": next_thumbnail_url,
+                    "provider": next_provider,
                     "options": player_options,
                     "round_duration_ms": settings.round_duration_ms,
                     "round_ends_at": ends_at
