@@ -298,6 +298,30 @@ async def fetch_tiktok_metadata(url: str, client: httpx.AsyncClient) -> ReelMeta
         meta.errors.append(f"Invalid TikTok URL: {url}")
         return meta
 
+    # Proactively resolve short URLs to canonical URLs
+    resolved_url = normalized_url
+    parsed = urlparse(normalized_url)
+    if parsed.hostname and (any(domain in parsed.hostname.lower() for domain in ("vt.tiktok.com", "vm.tiktok.com")) or parsed.path.startswith("/t/")):
+        try:
+            # Follow redirects using a HEAD request to extract the canonical video URL
+            response = await client.head(
+                normalized_url,
+                headers=DEFAULT_HEADERS,
+                follow_redirects=True,
+                timeout=REQUEST_TIMEOUT,
+            )
+            if response.status_code == 200:
+                resolved_url = str(response.url)
+                logger.info("Resolved TikTok short URL %s to %s", normalized_url, resolved_url)
+        except Exception as e:
+            logger.warning("Failed to resolve TikTok redirect for %s: %s", normalized_url, e)
+
+    # Re-validate with the resolved URL to extract the real shortcode (video ID)
+    is_valid_res, normalized_res, shortcode_res = validate_tiktok_url(resolved_url)
+    if is_valid_res:
+        normalized_url = normalized_res
+        shortcode = shortcode_res
+
     metadata = ReelMetadata(source_url=normalized_url, shortcode=shortcode, provider="TikTok")
 
     try:

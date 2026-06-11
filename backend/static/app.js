@@ -919,7 +919,8 @@ function renderRound(data) {
   
   const isTiktok = data.reel_url?.toLowerCase().includes('tiktok.com');
   document.getElementById('media-type-badge').textContent = isTiktok ? 'TIKTOK' : 'INSTAGRAM';
-  document.getElementById('media-short-text').textContent = `Video ID: ${data.reel_id.slice(0, 8)}...`;
+  const reelIdText = data.reel_id ? data.reel_id.slice(0, 8) : 'unknown';
+  document.getElementById('media-short-text').textContent = `Video ID: ${reelIdText}...`;
   
   if (embedUrl) {
     frame.src = embedUrl;

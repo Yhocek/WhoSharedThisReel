@@ -28,6 +28,9 @@ from app.services.game_engine import (
 
 logger = logging.getLogger(__name__)
 
+# In-memory lock to prevent double-resolution of a round
+_resolved_rounds: set[str] = set()
+
 
 def get_active_players(room_id: str, supabase: SupabaseClient) -> List[Dict[str, Any]]:
     """Get all connected players in the room."""
@@ -83,7 +86,8 @@ def get_reel_source_urls(reel_ids: List[str], supabase: SupabaseClient) -> Dict[
         .in_("id", reel_ids)
         .execute()
     )
-    return {str(row["id"]): row["source_url"] for row in (result.data or [])}
+    from app.schemas.reel import decode_compatible_url
+    return {str(row["id"]): decode_compatible_url(row["source_url"]) for row in (result.data or [])}
 
 
 async def start_match(
@@ -99,6 +103,10 @@ async def start_match(
     All validation happens BEFORE any DB writes to avoid leaving the
     room in a corrupted half-initialized state.
     """
+    # Clear any old resolution locks for this room
+    for lock in list(_resolved_rounds):
+        if lock.startswith(f"{room_id}_"):
+            _resolved_rounds.discard(lock)
     # ── Phase 1: Pure validation (no DB writes) ───────────────
 
     # 1. Fetch active players
@@ -336,9 +344,6 @@ async def check_active_round_completion(room_id: str, round_no: int, supabase: S
             # Cancel the timer so it doesn't fire late
             task_manager.cancel_task(room_id, f"timer_{round_no}")
             task_manager.spawn(room_id, _resolve_round(room_id, round_no, supabase), f"resolve_{round_no}")
-
-# In-memory lock to prevent double-resolution of a round
-_resolved_rounds: set[str] = set()
 
 async def _resolve_round(room_id: str, round_no: int, supabase: SupabaseClient):
     """Broadcast round_result, handle game_end vs next-round, and schedule next round."""
