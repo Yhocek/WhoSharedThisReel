@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WhoSharedThisVideo? - Guess Fast Who Send This Reel</title>
+  <meta name="theme-color" content="#0A0A0F">
+  <meta name="description" content="A party game: add reels with friends, then guess who shared each video.">
+  <title>WhoSharedThisVideo? — Guess who sent this reel</title>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -12,43 +14,57 @@
     <!-- Toast Notification Container -->
     <div id="toast-container"></div>
 
+    <!-- Confetti canvas (leaderboard celebration) -->
+    <canvas id="confetti-canvas"></canvas>
+
+    <!-- Top utility bar: language + sound -->
+    <div class="utility-bar">
+      <button id="sound-toggle-btn" class="utility-btn" title="Sound">🔊</button>
+      <button id="lang-toggle-btn" class="utility-btn" title="Language">EN</button>
+    </div>
+
     <!-- 1. WELCOME SCREEN -->
     <div id="welcome-view" class="view active">
       <div class="header-logo">
         <span class="logo-icon">🎬</span>
         <h1>WhoShared<span>ThisVideo?</span></h1>
-        <p class="subtitle">Guess Fast Who Send This Reel</p>
+        <p class="subtitle" data-i18n="tagline">Guess who sent this reel — fast!</p>
       </div>
 
       <div class="card glass">
         <div class="form-group">
-          <label for="nickname-input">Nickname / Display Name</label>
-          <input type="text" id="nickname-input" placeholder="Enter your name..." autocomplete="off">
+          <label for="nickname-input" data-i18n="nicknameLabel">Nickname</label>
+          <input type="text" id="nickname-input" data-i18n-placeholder="nicknamePlaceholder" placeholder="Enter your name..." maxlength="20" autocomplete="off">
         </div>
 
-        <div class="divider"><span>OR</span></div>
+        <div class="divider"><span data-i18n="or">OR</span></div>
 
         <div class="form-group">
-          <label for="room-code-input">Room Code (To Join)</label>
-          <input type="text" pattern="[0-9]*" inputmode="numeric" id="room-code-input" placeholder="6-digit code (e.g. 123456)" maxlength="6" autocomplete="off">
+          <label for="room-code-input" data-i18n="roomCodeLabel">Room code (to join)</label>
+          <input type="text" pattern="[0-9]*" inputmode="numeric" id="room-code-input" data-i18n-placeholder="roomCodePlaceholder" placeholder="6-digit code (e.g. 123456)" maxlength="6" autocomplete="off">
         </div>
 
         <div class="btn-group">
-          <button id="create-room-btn" class="btn btn-secondary">Create Room</button>
-          <button id="join-room-btn" class="btn btn-primary">Join Room</button>
+          <button id="create-room-btn" class="btn btn-secondary" data-i18n="createRoom">Create room</button>
+          <button id="join-room-btn" class="btn btn-primary" data-i18n="joinRoom">Join room</button>
         </div>
       </div>
+
+      <p class="welcome-howto" data-i18n="howTo">Everyone adds reels they've saved, then you guess whose taste is whose. Best with 3+ friends.</p>
     </div>
 
     <!-- 2. LOBBY SCREEN -->
     <div id="lobby-view" class="view">
       <div class="lobby-header card glass">
         <div>
-          <span class="label">ROOM CODE</span>
+          <span class="label" data-i18n="roomCodeUpper">ROOM CODE</span>
           <h2 id="room-code-display" class="clickable-code">------</h2>
-          <span class="tap-hint">click code to copy</span>
+          <span class="tap-hint" data-i18n="tapToCopy">tap code to copy</span>
         </div>
-        <button id="leave-lobby-btn" class="btn btn-danger btn-sm">Leave</button>
+        <div class="lobby-header-actions">
+          <button id="share-invite-btn" class="btn btn-secondary btn-sm" data-i18n="shareInvite">🔗 Invite link</button>
+          <button id="leave-lobby-btn" class="btn btn-danger btn-sm" data-i18n="leave">Leave</button>
+        </div>
       </div>
 
       <!-- Main Lobby Grid -->
@@ -57,7 +73,7 @@
         <div class="lobby-left">
           <!-- Players List -->
           <div class="card glass">
-            <h3>Players (<span id="player-count">0/8</span>)</h3>
+            <h3><span data-i18n="players">Players</span> (<span id="player-count">0/8</span>)</h3>
             <div id="player-list" class="list-container">
               <!-- Rendered dynamically -->
             </div>
@@ -65,9 +81,9 @@
 
           <!-- Pool Status Card -->
           <div class="card glass">
-            <h3>Pool Status (<span id="requirement-count">- reels per player</span>)</h3>
+            <h3><span data-i18n="poolStatus">Pool status</span> (<span id="requirement-count">-</span>)</h3>
             <div class="pool-summary">
-              <p>Total Reels in Pool: <strong id="pool-total">0</strong></p>
+              <p><span data-i18n="totalReels">Total reels in pool:</span> <strong id="pool-total">0</strong></p>
               <div id="pool-player-list" class="pool-player-list">
                 <!-- Rendered dynamically -->
               </div>
@@ -76,10 +92,9 @@
 
           <!-- My Reels in Pool Card -->
           <div class="card glass">
-            <h3>My Reels in Pool (<span id="my-pool-count">0</span>)</h3>
+            <h3><span data-i18n="myReelsInPool">My reels in pool</span> (<span id="my-pool-count">0</span>)</h3>
             <div id="my-pool-reels-list" class="my-pool-reels-list">
-              <!-- Rendered dynamically -->
-              <p class="empty-text">You haven't added any reels to this room yet.</p>
+              <p class="empty-text" data-i18n="noReelsYet">You haven't added any reels to this room yet.</p>
             </div>
           </div>
         </div>
@@ -88,12 +103,12 @@
         <div class="lobby-right">
           <!-- Add Reel Section -->
           <div class="card glass">
-            <h3>Add Videos</h3>
+            <h3 data-i18n="addVideos">Add videos</h3>
             <div class="input-row">
-              <input type="text" id="reel-url-input" placeholder="Instagram Reel or TikTok URL...">
-              <button id="add-reel-btn" class="btn btn-primary btn-icon">+</button>
+              <input type="text" id="reel-url-input" data-i18n-placeholder="urlPlaceholder" placeholder="Instagram, TikTok or YouTube Shorts URL...">
+              <button id="add-reel-btn" class="btn btn-primary btn-icon" title="Add">+</button>
             </div>
-            <button id="open-vault-btn" class="btn btn-vault">🎬 Reelslerim (My Reels)</button>
+            <button id="open-vault-btn" class="btn btn-vault" data-i18n="myVaultBtn">🎬 My reels</button>
             <div id="added-reels-list" class="added-reels-list">
               <!-- Rendered dynamically -->
             </div>
@@ -101,38 +116,39 @@
 
           <!-- Chat Section -->
           <div class="card glass chat-card">
-            <h3>Lobby Chat</h3>
+            <h3 data-i18n="lobbyChat">Lobby chat</h3>
             <div id="chat-messages" class="chat-messages">
-              <div class="empty-chat">No messages yet. Say hello!</div>
+              <div class="empty-chat" data-i18n="noMessages">No messages yet. Say hello!</div>
             </div>
             <div class="chat-input-row">
-              <input type="text" id="chat-input" placeholder="Type a message (max 50 chars)..." maxlength="50">
-              <button id="send-chat-btn" class="btn btn-primary btn-sm">Send</button>
+              <input type="text" id="chat-input" data-i18n-placeholder="chatPlaceholder" placeholder="Type a message..." maxlength="50">
+              <button id="send-chat-btn" class="btn btn-primary btn-sm" data-i18n="send">Send</button>
             </div>
             <div class="chat-char-counter"><span id="chat-char-count">0</span>/50</div>
           </div>
 
           <!-- Host Settings -->
           <div id="host-settings-card" class="card glass host-only-settings hidden">
-            <h3>Host Controls</h3>
+            <h3 data-i18n="hostControls">Host controls</h3>
             <div class="form-group">
-              <label>Round Count</label>
+              <label data-i18n="roundCount">Round count</label>
               <div class="round-options">
-                <button class="btn btn-round" data-rounds="10">10 (min 5)</button>
-                <button class="btn btn-round active" data-rounds="20">20 (min 10)</button>
-                <button class="btn btn-round" data-rounds="30">30 (min 15)</button>
-                <button class="btn btn-round" data-rounds="50">50 (min 25)</button>
-                <button class="btn btn-round" data-rounds="100">100 (min 50)</button>
+                <button class="btn btn-round" data-rounds="10">10</button>
+                <button class="btn btn-round" data-rounds="20">20</button>
+                <button class="btn btn-round" data-rounds="30">30</button>
+                <button class="btn btn-round" data-rounds="50">50</button>
+                <button class="btn btn-round" data-rounds="100">100</button>
               </div>
+              <p class="round-hint" id="round-hint"></p>
             </div>
             <div id="start-error-msg" class="error-msg hidden"></div>
-            <button id="start-game-btn" class="btn btn-success btn-block">Start Game</button>
+            <button id="start-game-btn" class="btn btn-success btn-block" data-i18n="startGame">Start game</button>
           </div>
 
           <!-- Non-Host Waiting Card -->
           <div id="player-waiting-card" class="card glass waiting-settings">
-            <h3>Game Info</h3>
-            <p id="waiting-game-info">Waiting for host to start the game...</p>
+            <h3 data-i18n="gameInfo">Game info</h3>
+            <p id="waiting-game-info" data-i18n="waitingHost">Waiting for the host to start the game...</p>
           </div>
         </div>
       </div>
@@ -142,11 +158,14 @@
     <div id="game-view" class="view">
       <div class="game-header card glass">
         <div class="header-left">
-          <span class="label">ROUND</span>
-          <h2 id="game-round-title">Round 1 / 10</h2>
+          <span class="label" data-i18n="roundUpper">ROUND</span>
+          <h2 id="game-round-title">— / —</h2>
+        </div>
+        <div class="header-center">
+          <span class="streak-chip hidden" id="streak-chip">🔥 <span id="streak-count">0</span></span>
         </div>
         <div class="header-right">
-          <span class="label">TIME LEFT</span>
+          <span class="label" data-i18n="timeLeftUpper">TIME LEFT</span>
           <h2 id="game-timer">--s</h2>
         </div>
       </div>
@@ -160,29 +179,32 @@
         <!-- Video Embed -->
         <div class="game-main card glass">
           <div class="video-container">
-            <iframe id="reel-embed-frame" src="" frameborder="0" allowfullscreen></iframe>
+            <iframe id="reel-embed-frame" src="" frameborder="0" allowfullscreen allow="autoplay; encrypted-media; picture-in-picture"></iframe>
             <div id="no-embed-fallback" class="fallback-container hidden">
-              <span class="fallback-icon">🎬</span>
-              <p>Unable to embed this link directly in the browser.</p>
-              <a id="fallback-link" href="#" target="_blank" class="btn btn-primary">Open Video in New Tab</a>
+              <div class="fallback-thumb" id="fallback-thumb"></div>
+              <div class="fallback-overlay">
+                <span class="fallback-icon">▶️</span>
+                <p data-i18n="embedFail">This platform doesn't allow embedding here.</p>
+                <a id="fallback-link" href="#" target="_blank" rel="noopener" class="btn btn-primary" data-i18n="openInNewTab">Open video in a new tab</a>
+              </div>
             </div>
           </div>
           <div class="media-details">
             <span class="media-tag" id="media-type-badge">REEL</span>
-            <span class="media-url-text" id="media-short-text">Loading video URL...</span>
-            <a id="direct-open-link" href="#" target="_blank" class="direct-link-btn hidden">
-              <span>🔗</span> Videoyu Aç (Direct Link)
+            <span class="media-url-text" id="media-short-text"></span>
+            <a id="direct-open-link" href="#" target="_blank" rel="noopener" class="direct-link-btn hidden">
+              <span>🔗</span> <span data-i18n="openVideo">Open video</span>
             </a>
           </div>
         </div>
 
         <!-- Guess Panel -->
         <div class="game-sidebar card glass">
-          <h3>Who shared this video?</h3>
+          <h3 data-i18n="whoShared">Who shared this video?</h3>
           <div id="guess-buttons" class="guess-buttons-grid">
             <!-- Rendered dynamically -->
           </div>
-          
+
           <!-- Answer Status Box -->
           <div id="guess-status-box" class="guess-status-box hidden">
             <!-- Rendered dynamically -->
@@ -195,19 +217,19 @@
     <div id="leaderboard-view" class="view">
       <div class="header-logo">
         <span class="logo-icon">🏆</span>
-        <h1>Final Leaderboard</h1>
-        <p class="subtitle">Match Results</p>
+        <h1 data-i18n="finalLeaderboard">Final leaderboard</h1>
+        <p class="subtitle" data-i18n="matchResults">Match results</p>
       </div>
 
       <div class="card glass">
         <!-- Tab selector for podium categories -->
         <div class="podium-tabs">
-          <button class="podium-tab-btn active" data-tab="score">Puan Sıralaması</button>
-          <button class="podium-tab-btn" data-tab="speed">En Hızlı Tahmin Yapan</button>
-          <button class="podium-tab-btn" data-tab="accuracy">En İsabetli Tahmin Yapan</button>
+          <button class="podium-tab-btn active" data-tab="score" data-i18n="tabScore">Top score</button>
+          <button class="podium-tab-btn" data-tab="speed" data-i18n="tabSpeed">Fastest guesser</button>
+          <button class="podium-tab-btn" data-tab="accuracy" data-i18n="tabAccuracy">Most accurate</button>
         </div>
 
-        <!-- Redesigned 3D-step Podiums -->
+        <!-- 3D-step Podiums -->
         <div class="podium-container" id="podium-container">
           <!-- 2nd Place (Left) -->
           <div class="podium-column place-2" id="podium-col-2">
@@ -248,24 +270,25 @@
         </div>
 
         <div class="btn-group" style="margin-top: 30px;">
-          <button id="leaderboard-playagain-btn" class="btn btn-primary btn-block">Play Again</button>
-          <button id="leaderboard-leave-btn" class="btn btn-secondary btn-block">Leave Game</button>
+          <button id="leaderboard-playagain-btn" class="btn btn-primary btn-block" data-i18n="playAgain">Play again</button>
+          <button id="leaderboard-leave-btn" class="btn btn-secondary btn-block" data-i18n="leaveGame">Leave game</button>
         </div>
       </div>
     </div>
 
-    <!-- 5. CHOOSE FROM VAULT MODAL (MY REELS) -->
+    <!-- 5. MY REELS (VAULT) MODAL -->
     <div id="vault-modal" class="modal-overlay hidden">
       <div class="modal-content glass">
         <div class="modal-header">
-          <h2>🎬 Reelslerim (My Reels)</h2>
-          <button id="close-vault-modal" class="modal-close">&times;</button>
+          <h2 data-i18n="vaultTitle">🎬 My reels</h2>
+          <button id="close-vault-modal" class="modal-close" title="Close">&times;</button>
         </div>
         <div class="modal-body">
+          <p class="vault-explainer" data-i18n="vaultExplainer">Saved on this device — collect videos here and add them to any room.</p>
           <div class="vault-add-form">
-            <input type="text" id="modal-vault-url-input" placeholder="Instagram Reel or TikTok URL...">
-            <input type="text" id="modal-vault-note-input" placeholder="Not ekle (Add a note)..." maxlength="50">
-            <button id="modal-vault-add-btn" class="btn btn-primary btn-sm" style="width:100%; margin-top:8px;">Reelslerime Ekle</button>
+            <input type="text" id="modal-vault-url-input" data-i18n-placeholder="urlPlaceholder" placeholder="Instagram, TikTok or YouTube Shorts URL...">
+            <input type="text" id="modal-vault-note-input" data-i18n-placeholder="notePlaceholder" placeholder="Add a note..." maxlength="50">
+            <button id="modal-vault-add-btn" class="btn btn-primary btn-sm" style="width:100%; margin-top:8px;" data-i18n="addToVault">Save to my reels</button>
           </div>
           <div id="vault-modal-list" class="vault-modal-list" style="margin-top: 20px;">
             <!-- Rendered dynamically -->

@@ -1259,3 +1259,163 @@ input[type="text"]:focus {
   margin: 10px 0;
 }
 
+
+/* =============================================================================
+   v2 IMPROVEMENTS — utility bar, streaks, timer urgency, fallback, confetti
+   ============================================================================= */
+
+/* Top-right utility bar (language + sound) */
+.utility-bar {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  gap: 8px;
+  z-index: 900;
+}
+.utility-btn {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 14px;
+  border-radius: 12px;
+  padding: 8px 12px;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: border-color 0.2s ease, transform 0.1s ease;
+}
+.utility-btn:hover { border-color: var(--primary-accent); }
+.utility-btn:active { transform: scale(0.95); }
+
+/* Welcome how-to line */
+.welcome-howto {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  margin-top: 4px;
+  padding: 0 12px;
+}
+
+/* Lobby header action buttons */
+.lobby-header-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* Round count hint */
+.round-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 8px;
+  line-height: 1.4;
+}
+
+/* Streak chip in game header */
+.header-center { display: flex; align-items: center; }
+.streak-chip {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 16px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: linear-gradient(45deg, rgba(245, 158, 11, 0.25), rgba(225, 48, 108, 0.25));
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  animation: streakPulse 1.2s ease-in-out infinite;
+}
+@keyframes streakPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+}
+.streak-banner {
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #F59E0B;
+}
+
+/* Timer urgency (last 5 seconds) */
+.timer-urgent {
+  color: var(--danger-color) !important;
+  animation: timerPulse 0.5s ease-in-out infinite;
+}
+@keyframes timerPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.12); }
+}
+.progress-bar.progress-urgent {
+  background: linear-gradient(90deg, var(--danger-color), #F59E0B) !important;
+}
+
+/* Improved video fallback: thumbnail + overlay */
+.fallback-container {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.fallback-thumb {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  filter: blur(6px) brightness(0.45);
+}
+.fallback-overlay {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px;
+}
+.fallback-overlay p {
+  color: var(--text-main);
+  font-size: 14px;
+  max-width: 280px;
+}
+.fallback-overlay .fallback-icon { font-size: 44px; }
+
+/* Highlight the local player in the round-break leaderboard */
+.leaderboard-me {
+  border: 1px solid rgba(124, 58, 237, 0.55);
+  border-radius: 10px;
+  background: rgba(124, 58, 237, 0.12);
+}
+
+/* Vault explainer text */
+.vault-explainer {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+  line-height: 1.45;
+}
+
+/* Confetti canvas overlay */
+#confetti-canvas {
+  display: none;
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 950;
+}
+
+/* Reduced motion: kill decorative animation */
+@media (prefers-reduced-motion: reduce) {
+  .streak-chip, .timer-urgent, .logo-icon, .dancing { animation: none !important; }
+}
+
+/* Small-screen polish */
+@media (max-width: 600px) {
+  .utility-bar { top: 10px; right: 10px; }
+  .lobby-header-actions { flex-direction: column; align-items: stretch; }
+  .game-header { flex-wrap: wrap; gap: 8px; }
+}
